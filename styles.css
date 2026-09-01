@@ -73,3 +73,12 @@ tr.click:hover td{background:#fafbf9}
   nav{grid-template-columns:1fr 1fr}.metrics{grid-template-columns:1fr 1fr}main{padding:20px 16px 50px}
 }
 @media(max-width:600px){.formgrid{grid-template-columns:1fr}.full{grid-column:auto}.topbar h2{font-size:25px}}
+
+.appointment-row{padding:12px 0;border-bottom:1px solid var(--line)}
+.appointment-row:last-child{border-bottom:0}
+.appointment-note{margin-top:4px;color:var(--muted)}
+.appointment-status{display:inline-flex;margin-top:8px;padding:5px 8px;border-radius:999px;font-size:11px;font-weight:800;background:#eef0ed}
+.appointment-status.confermato{background:#e7f1ea;color:#2e6648}
+.appointment-status.rifiutato{background:#f9e9e9;color:#8d3333}
+.appointment-status.proposto{background:#fff1cf;color:#785c18}
+.appointment-actions{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}

@@ -1,33 +1,28 @@
-ARCHEA SERVICE DESK V1.5
+ARCHEA SERVICE DESK V1.6
 
-NOVITÀ
-- Restyling grafico più elegante e corporate.
-- Logo Archea Associati integrato in login e sidebar.
-- Campanella notifiche con contatore.
-- Notifiche interne USER:
-  * commento IT
-  * cambio stato
-  * appuntamento fissato
-- Notifiche interne IT:
-  * nuovo ticket
-  * risposta dell'utente
-- USER vede solo Apri ticket + I miei ticket + i propri dettagli.
-- IT mantiene dashboard, calendario, movimenti, prenotazioni e censimento.
+FIX / NOVITÀ
+- Le notifiche dei commenti non dipendono più dal frontend:
+  ora vengono create da trigger Supabase lato database.
+- Nuovo commento USER -> notifica IT.
+- Nuovo commento IT -> notifica USER.
+- Le note interne IT NON notificano l'utente.
+- Nuovo ticket -> notifica IT.
+- Cambio stato -> notifica USER.
+- Proposta appuntamento -> notifica USER.
+- L'utente può CONFERMARE oppure indicare "NON POSSO".
+- Conferma/rifiuto appuntamento -> notifica IT.
+- Campanella si aggiorna automaticamente ogni 30 secondi.
 
 PRIMA DI PUBBLICARE
-1. Supabase > SQL Editor
-2. Esegui migration_v1_5_notifications.sql una sola volta.
-3. Se NON hai ancora eseguito la migration appuntamenti della V1.4, esegui anche migration_v1_4_appointments.sql.
+1. Supabase > SQL Editor > New query.
+2. Esegui migration_v1_6_notifications_appointments.sql UNA VOLTA.
+3. GitHub: sostituisci index.html, styles.css, app.js.
+4. Mantieni logo_archea.png.
+5. Commit changes.
+6. Attendi GitHub Pages e fai CTRL+F5.
 
-GITHUB
-Sostituisci/carica nella root:
-- index.html
-- styles.css
-- app.js
-- logo_archea.png
-
-Poi Commit changes e CTRL+F5.
-
-NOTA
-In questa versione le notifiche sono interne al portale.
-Telegram ed email non sono ancora collegati, così evitiamo spam finché non definiamo esattamente quali eventi devono uscire dal portale.
+TEST CONSIGLIATO
+A) Rider commenta un ticket -> Giuseppe deve vedere una notifica.
+B) Giuseppe commenta senza "Nota interna" -> Rider deve vedere una notifica.
+C) Giuseppe manda appuntamento -> Rider vede "Appuntamento da confermare".
+D) Rider conferma -> Giuseppe riceve "Appuntamento confermato".

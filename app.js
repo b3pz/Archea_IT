@@ -15,9 +15,9 @@ async function api(path,{method='GET',body=null,auth=true,headers={}}={}){const 
 async function select(t,q=''){return api(`/rest/v1/${t}?${q}`)}
 async function insert(t,b,ret=true){return api(`/rest/v1/${t}`,{method:'POST',body:b,headers:{Prefer:ret?'return=representation':'return=minimal'}})}
 async function update(t,f,b){return api(`/rest/v1/${t}?${f}`,{method:'PATCH',body:b,headers:{Prefer:'return=representation'}})}
-async function notify(uid,title,message,ticketId=null){try{await insert('notifications',{user_id:uid,title,message,ticket_id:ticketId},false)}catch(e){}}
-async function profileByEmail(email){const d=await select('profiles',`select=*&email=eq.${encodeURIComponent(email)}`);return d[0]||null}
-async function allIT(){return await select('profiles','select=*&ruolo=eq.IT')}
+async function notify(){ /* V1.6: notifiche generate lato database */ }
+async function profileByEmail(){ return null; }
+async function allIT(){ return []; }
 
 async function refreshNotifications(){
   const d=await select('notifications',`select=*&user_id=eq.${user.id}&order=created_at.desc&limit=30`);
@@ -36,31 +36,190 @@ function wire(){document.querySelectorAll('[data-id]').forEach(r=>r.onclick=()=>
 async function userHome(){page('Service Desk','Apri una richiesta o controlla i tuoi ticket');const d=await select('tickets',`select=*&richiedente_email=eq.${encodeURIComponent(user.email)}&order=created_at.desc&limit=5`);$('content').innerHTML=`<div class="userhero"><h3>Come possiamo aiutarti?</h3><p>Puoi aprire ticket e vedere solo le tue richieste.</p><button id="openNow" class="primary">Apri un ticket</button></div><div class="panel"><h3>Le tue richieste recenti</h3>${table(d)}</div>`;$('openNow').onclick=()=>nav('new');wire()}
 async function home(){if(profile.ruolo!=='IT')return userHome();page('Dashboard','Panoramica del Service Desk');const d=await select('tickets','select=*&order=created_at.desc');$('content').innerHTML=`<div class="metrics"><div class="metric"><span>Aperti</span><b>${d.filter(x=>x.stato==='APERTO').length}</b></div><div class="metric"><span>In lavorazione</span><b>${d.filter(x=>x.stato==='IN LAVORAZIONE').length}</b></div><div class="metric"><span>Chiusi</span><b>${d.filter(x=>x.stato==='CHIUSO').length}</b></div><div class="metric"><span>Totale</span><b>${d.length}</b></div></div><div class="panel"><h3>Ticket recenti</h3>${table(d.slice(0,8),true)}</div>`;wire()}
 function newTicket(){page('Nuovo ticket','Apri una richiesta al team IT');$('content').innerHTML=`<div class="panel"><form id="ticketForm" class="formgrid"><label>Categoria<select id="cat" required><option value="">Seleziona...</option><option>Supporto IT</option><option>Installazioni</option><option>Manutenzioni</option><option>Hardware</option><option>Accessi</option><option>Rete / Wi-Fi</option><option>Movimento persona</option><option>Prenotazione materiale</option><option>Altro</option></select></label><label>Oggetto<input id="sub" required></label><label class="full">Descrizione<textarea id="desc" rows="8" required></textarea></label><div class="full"><button class="primary">Invia ticket</button></div></form><p id="result"></p></div>`;
-$('ticketForm').onsubmit=async e=>{e.preventDefault();try{const rows=await insert('tickets',{categoria:$('cat').value,oggetto:$('sub').value.trim(),descrizione:$('desc').value.trim(),stato:'APERTO',richiedente_nome:profile.nome,richiedente_email:user.email});const d=rows[0],n=num(d.id);await update('tickets',`id=eq.${d.id}`,{numero_ticket:n});await insert('ticket_history',{ticket_id:d.id,evento:'Ticket creato',autore:profile.nome},false);const its=await allIT();for(const it of its)await notify(it.id,'Nuovo ticket',`${profile.nome}: ${$('sub').value.trim()}`,d.id);e.target.reset();$('result').textContent=`Ticket ${n} creato.`;toast('Ticket creato');refreshNotifications()}catch(err){$('result').textContent=err.message}}}
+$('ticketForm').onsubmit=async e=>{e.preventDefault();try{const rows=await insert('tickets',{categoria:$('cat').value,oggetto:$('sub').value.trim(),descrizione:$('desc').value.trim(),stato:'APERTO',richiedente_nome:profile.nome,richiedente_email:user.email});const d=rows[0],n=num(d.id);await update('tickets',`id=eq.${d.id}`,{numero_ticket:n});await insert('ticket_history',{ticket_id:d.id,evento:'Ticket creato',autore:profile.nome},false);e.target.reset();$('result').textContent=`Ticket ${n} creato.`;toast('Ticket creato');refreshNotifications()}catch(err){$('result').textContent=err.message}}}
 async function mine(){page('I miei ticket','Storico delle tue richieste');const d=await select('tickets',`select=*&richiedente_email=eq.${encodeURIComponent(user.email)}&order=created_at.desc`);$('content').innerHTML=`<div class="panel">${table(d)}</div>`;wire()}
 async function it(){if(profile.ruolo!=='IT')return userHome();page('Gestione IT','Tutti i ticket');const d=await select('tickets','select=*&order=created_at.desc');$('content').innerHTML=`<div class="panel">${table(d,true)}</div>`;wire()}
 async function calendar(){if(profile.ruolo!=='IT')return userHome();page('Calendario','Appuntamenti collegati ai ticket');const d=await select('appointments','select=*,tickets(numero_ticket,oggetto,richiedente_nome)&order=start_at.asc');$('content').innerHTML=`<div class="panel"><h3>Appuntamenti</h3>${d.length?d.map(a=>`<div class="appointment"><b>${fmt(a.start_at)} • ${esc(a.modalita)}</b><div>${esc(a.tickets?.numero_ticket||'')} — ${esc(a.tickets?.oggetto||'')}</div><small>${esc(a.tickets?.richiedente_nome||'')} • ${a.durata_minuti} min</small></div>`).join(''):'<p>Nessun appuntamento.</p>'}</div>`}
 function placeholder(k){if(profile.ruolo!=='IT')return userHome();const m={movimenti:['Movimenti','Ingressi, uscite, cambio postazione e sede.'],prenotazioni:['Prenotazioni','Materiale, calendario e verbale di consegna.'],censimento:['Censimento','Inventario asset e storico.']};page(...m[k]);$('content').innerHTML=`<div class="panel"><h3>${m[k][0]}</h3><p>${m[k][1]}</p><span class="badge">Prossima fase</span></div>`}
 
 async function detail(id){
-page('Dettaglio ticket','Conversazione e avanzamento');const rows=await select('tickets',`select=*&id=eq.${id}`);if(!rows.length)return;const t=rows[0];if(profile.ruolo!=='IT'&&t.richiedente_email!==user.email)return toast('Non autorizzato');let ap=[];try{ap=await select('appointments',`select=*&ticket_id=eq.${id}&order=start_at.desc`)}catch{}
-$('content').innerHTML=`<div class="panel"><span class="badge">${t.numero_ticket||num(t.id)}</span><h3>${esc(t.oggetto)}</h3><p>${esc(t.categoria)} • ${esc(t.richiedente_nome||t.richiedente_email)} • ${fmt(t.created_at)}</p>${badge(t.stato)}<p>${esc(t.descrizione)}</p>${ap.length?`<div class="appointment"><b>Appuntamento</b>${ap.map(a=>`<div>${fmt(a.start_at)} • ${esc(a.modalita)} • ${a.durata_minuti} min</div>`).join('')}</div>`:''}</div>
-${profile.ruolo==='IT'?`<div class="panel"><h3>Gestione IT</h3><label>Stato<select id="st"><option>APERTO</option><option>IN LAVORAZIONE</option><option>IN ATTESA</option><option>CHIUSO</option></select></label><label>Assegnato a<input id="ass"></label><button id="saveTicket" class="primary">Salva</button></div><div class="panel"><h3>Fissa appuntamento</h3><form id="apptForm" class="formgrid"><label>Data e ora<input id="apptStart" type="datetime-local" required></label><label>Durata<select id="apptDur"><option>15</option><option selected>30</option><option>45</option><option>60</option></select></label><label>Modalità<select id="apptMode"><option>Presso IT</option><option>Alla postazione utente</option><option>Remoto</option><option>Sala / sede</option></select></label><label>Note<input id="apptNote"></label><div class="full"><button class="primary">Salva appuntamento</button></div></form></div>`:''}
-<div class="panel"><h3>Commenti</h3><div id="comments"></div><form id="commentForm"><label>Commento<textarea id="ct" rows="3" required></textarea></label>${profile.ruolo==='IT'?'<label><input id="internal" type="checkbox" style="width:auto"> Nota interna IT</label>':''}<button class="primary">Invia commento</button></form></div>
-${profile.ruolo==='IT'?`<div class="panel"><h3>Checklist IT</h3><div id="checks"></div><form id="checkForm"><label>Nuova attività<input id="checkText"></label><button class="secondary">Aggiungi</button></form></div>`:''}`;
+page('Dettaglio ticket','Conversazione e avanzamento');
+const rows=await select('tickets',`select=*&id=eq.${id}`);
+if(!rows.length)return;
+const t=rows[0];
+if(profile.ruolo!=='IT'&&t.richiedente_email!==user.email)return toast('Non autorizzato');
 
-const requester=await profileByEmail(t.richiedente_email);
+let ap=[];
+try{ap=await select('appointments',`select=*&ticket_id=eq.${id}&order=start_at.desc`)}catch{}
+
+const apHtml = ap.length ? `<div class="appointment"><b>Appuntamento</b>${ap.map(a=>{
+  const st=a.status||'PROPOSTO';
+  const statusLabel=st==='CONFERMATO'?'Confermato':st==='RIFIUTATO'?'Da riprogrammare':'In attesa di conferma';
+  const action=(profile.ruolo!=='IT' && st==='PROPOSTO') ? `
+    <div class="appointment-actions">
+      <button class="primary ap-confirm" data-apid="${a.id}">Conferma</button>
+      <button class="ghost ap-decline" data-apid="${a.id}">Non posso</button>
+    </div>` : '';
+  return `<div class="appointment-row">
+    <div><strong>${fmt(a.start_at)} • ${esc(a.modalita)} • ${a.durata_minuti} min</strong></div>
+    ${a.note?`<div class="appointment-note">${esc(a.note)}</div>`:''}
+    <span class="appointment-status ${st.toLowerCase()}">${statusLabel}</span>
+    ${action}
+  </div>`;
+}).join('')}</div>` : '';
+
+$('content').innerHTML=`<div class="panel">
+  <span class="badge">${t.numero_ticket||num(t.id)}</span>
+  <h3>${esc(t.oggetto)}</h3>
+  <p>${esc(t.categoria)} • ${esc(t.richiedente_nome||t.richiedente_email)} • ${fmt(t.created_at)}</p>
+  ${badge(t.stato)}
+  <p>${esc(t.descrizione)}</p>
+  ${apHtml}
+</div>
+
+${profile.ruolo==='IT'?`<div class="panel">
+  <h3>Gestione IT</h3>
+  <label>Stato<select id="st"><option>APERTO</option><option>IN LAVORAZIONE</option><option>IN ATTESA</option><option>CHIUSO</option></select></label>
+  <label>Assegnato a<input id="ass"></label>
+  <button id="saveTicket" class="primary">Salva</button>
+</div>
+<div class="panel">
+  <h3>Fissa appuntamento</h3>
+  <form id="apptForm" class="formgrid">
+    <label>Data e ora<input id="apptStart" type="datetime-local" required></label>
+    <label>Durata<select id="apptDur"><option>15</option><option selected>30</option><option>45</option><option>60</option></select></label>
+    <label>Modalità<select id="apptMode"><option>Presso IT</option><option>Alla postazione utente</option><option>Remoto</option><option>Sala / sede</option></select></label>
+    <label>Note<input id="apptNote"></label>
+    <div class="full"><button class="primary">Invia proposta appuntamento</button></div>
+  </form>
+</div>`:''}
+
+<div class="panel">
+  <h3>Commenti</h3>
+  <div id="comments"></div>
+  <form id="commentForm">
+    <label>Commento<textarea id="ct" rows="3" required></textarea></label>
+    ${profile.ruolo==='IT'?'<label><input id="internal" type="checkbox" style="width:auto"> Nota interna IT</label>':''}
+    <button class="primary">Invia commento</button>
+  </form>
+</div>
+
+${profile.ruolo==='IT'?`<div class="panel">
+  <h3>Checklist IT</h3>
+  <div id="checks"></div>
+  <form id="checkForm">
+    <label>Nuova attività<input id="checkText"></label>
+    <button class="secondary">Aggiungi</button>
+  </form>
+</div>`:''}`;
+
 if(profile.ruolo==='IT'){
-  $('st').value=t.stato;$('ass').value=t.assegnato_a||'';
-  $('saveTicket').onclick=async()=>{const stato=$('st').value;await update('tickets',`id=eq.${id}`,{stato,assegnato_a:$('ass').value.trim()||null,closed_at:stato==='CHIUSO'?new Date().toISOString():null});if(requester)await notify(requester.id,'Ticket aggiornato',`${t.numero_ticket||num(t.id)}: ${stato}`,id);toast('Aggiornato');detail(id)};
-  $('apptForm').onsubmit=async e=>{e.preventDefault();const start=$('apptStart').value;await insert('appointments',{ticket_id:id,start_at:new Date(start).toISOString(),durata_minuti:+$('apptDur').value,modalita:$('apptMode').value,note:$('apptNote').value.trim()||null,created_by:user.id},false);await update('tickets',`id=eq.${id}`,{stato:'IN ATTESA'});if(requester)await notify(requester.id,'Appuntamento fissato',`${fmt(new Date(start).toISOString())} • ${$('apptMode').value}`,id);toast('Appuntamento salvato');detail(id)}
+  $('st').value=t.stato;
+  $('ass').value=t.assegnato_a||'';
+
+  $('saveTicket').onclick=async()=>{
+    const stato=$('st').value;
+    await update('tickets',`id=eq.${id}`,{
+      stato,
+      assegnato_a:$('ass').value.trim()||null,
+      closed_at:stato==='CHIUSO'?new Date().toISOString():null
+    });
+    toast('Aggiornato');
+    detail(id);
+    refreshNotifications();
+  };
+
+  $('apptForm').onsubmit=async e=>{
+    e.preventDefault();
+    const start=$('apptStart').value;
+    await insert('appointments',{
+      ticket_id:id,
+      start_at:new Date(start).toISOString(),
+      durata_minuti:+$('apptDur').value,
+      modalita:$('apptMode').value,
+      note:$('apptNote').value.trim()||null,
+      created_by:user.id,
+      status:'PROPOSTO'
+    },false);
+    await update('tickets',`id=eq.${id}`,{stato:'IN ATTESA'});
+    toast('Proposta appuntamento inviata');
+    detail(id);
+    refreshNotifications();
+  };
 }
-async function comments(){const d=await select('comments',`select=*&ticket_id=eq.${id}&order=created_at.asc`);const v=profile.ruolo==='IT'?d:d.filter(x=>!x.nota_interna);$('comments').innerHTML=v.length?v.map(x=>`<div class="comment ${x.nota_interna?'internal':''}"><b>${esc(x.autore)}${x.nota_interna?' • Nota interna':''}</b><small style="float:right">${fmt(x.created_at)}</small><p>${esc(x.testo)}</p></div>`).join(''):'<p>Nessun commento.</p>'}
-$('commentForm').onsubmit=async e=>{e.preventDefault();const txt=$('ct').value.trim(),internal=profile.ruolo==='IT'&&$('internal').checked;await insert('comments',{ticket_id:id,autore:profile.nome,autore_email:user.email,testo:txt,nota_interna:internal},false);if(profile.ruolo==='IT'&&!internal&&requester)await notify(requester.id,'Nuovo commento IT',`${t.numero_ticket||num(t.id)}: ${txt}`,id);if(profile.ruolo!=='IT'){const its=await allIT();for(const itp of its)await notify(itp.id,'Risposta utente',`${profile.nome}: ${txt}`,id)}$('ct').value='';comments();refreshNotifications()}
-if(profile.ruolo==='IT'){async function checks(){const d=await select('checklist_items',`select=*&ticket_id=eq.${id}&order=id.asc`);$('checks').innerHTML=d.length?d.map(x=>`<label class="check"><input type="checkbox" data-c="${x.id}" ${x.completato?'checked':''}><span>${esc(x.testo)}</span></label>`).join(''):'<p>Nessuna attività.</p>';document.querySelectorAll('[data-c]').forEach(c=>c.onchange=()=>update('checklist_items',`id=eq.${+c.dataset.c}`,{completato:c.checked,completed_at:c.checked?new Date().toISOString():null,completed_by:c.checked?profile.nome:null}))}$('checkForm').onsubmit=async e=>{e.preventDefault();if(!$('checkText').value.trim())return;await insert('checklist_items',{ticket_id:id,testo:$('checkText').value.trim()},false);$('checkText').value='';checks()};checks()}
-comments()
+
+// USER: conferma / rifiuta proposta appuntamento
+document.querySelectorAll('.ap-confirm').forEach(b=>b.onclick=async()=>{
+  await update('appointments',`id=eq.${+b.dataset.apid}`,{
+    status:'CONFERMATO',
+    confirmed_at:new Date().toISOString(),
+    confirmed_by:user.id
+  });
+  toast('Appuntamento confermato');
+  detail(id);
+  refreshNotifications();
+});
+document.querySelectorAll('.ap-decline').forEach(b=>b.onclick=async()=>{
+  await update('appointments',`id=eq.${+b.dataset.apid}`,{
+    status:'RIFIUTATO',
+    confirmed_at:new Date().toISOString(),
+    confirmed_by:user.id
+  });
+  toast('Segnalato: appuntamento da riprogrammare');
+  detail(id);
+  refreshNotifications();
+});
+
+async function comments(){
+  const d=await select('comments',`select=*&ticket_id=eq.${id}&order=created_at.asc`);
+  const v=profile.ruolo==='IT'?d:d.filter(x=>!x.nota_interna);
+  $('comments').innerHTML=v.length?v.map(x=>`<div class="comment ${x.nota_interna?'internal':''}">
+    <b>${esc(x.autore)}${x.nota_interna?' • Nota interna':''}</b>
+    <small style="float:right">${fmt(x.created_at)}</small>
+    <p>${esc(x.testo)}</p>
+  </div>`).join(''):'<p>Nessun commento.</p>';
+}
+$('commentForm').onsubmit=async e=>{
+  e.preventDefault();
+  const txt=$('ct').value.trim();
+  const internal=profile.ruolo==='IT'&&$('internal').checked;
+  await insert('comments',{
+    ticket_id:id,
+    autore:profile.nome,
+    autore_email:user.email,
+    testo:txt,
+    nota_interna:internal
+  },false);
+  $('ct').value='';
+  comments();
+  refreshNotifications();
+};
+
+if(profile.ruolo==='IT'){
+  async function checks(){
+    const d=await select('checklist_items',`select=*&ticket_id=eq.${id}&order=id.asc`);
+    $('checks').innerHTML=d.length?d.map(x=>`<label class="check">
+      <input type="checkbox" data-c="${x.id}" ${x.completato?'checked':''}>
+      <span>${esc(x.testo)}</span>
+    </label>`).join(''):'<p>Nessuna attività.</p>';
+    document.querySelectorAll('[data-c]').forEach(c=>c.onchange=()=>update('checklist_items',`id=eq.${+c.dataset.c}`,{
+      completato:c.checked,
+      completed_at:c.checked?new Date().toISOString():null,
+      completed_by:c.checked?profile.nome:null
+    }));
+  }
+  $('checkForm').onsubmit=async e=>{
+    e.preventDefault();
+    if(!$('checkText').value.trim())return;
+    await insert('checklist_items',{ticket_id:id,testo:$('checkText').value.trim()},false);
+    $('checkText').value='';
+    checks();
+  };
+  checks();
+}
+comments();
 }
 function nav(v){if(profile?.ruolo!=='IT'&&!['new','mine'].includes(v))return userHome();if(v==='home')home();else if(v==='new')newTicket();else if(v==='mine')mine();else if(v==='it')it();else if(v==='calendar')calendar();else placeholder(v)}
-async function boot(){const raw=localStorage.getItem('archea_sd_session');if(raw){try{session=JSON.parse(raw);user=await api('/auth/v1/user')}catch{clear()}}if(!user){$('login').classList.remove('hidden');$('app').classList.add('hidden');return}const p=await select('profiles',`select=*&id=eq.${user.id}`);if(!p.length){clear();$('loginErr').textContent='Profilo non trovato';return}profile=p[0];$('who').textContent=profile.nome||user.email;$('role').textContent=profile.ruolo;$('userNav').classList.toggle('hidden',profile.ruolo==='IT');$('itNav').classList.toggle('hidden',profile.ruolo!=='IT');$('login').classList.add('hidden');$('app').classList.remove('hidden');profile.ruolo==='IT'?home():userHome();refreshNotifications()}
+async function boot(){const raw=localStorage.getItem('archea_sd_session');if(raw){try{session=JSON.parse(raw);user=await api('/auth/v1/user')}catch{clear()}}if(!user){$('login').classList.remove('hidden');$('app').classList.add('hidden');return}const p=await select('profiles',`select=*&id=eq.${user.id}`);if(!p.length){clear();$('loginErr').textContent='Profilo non trovato';return}profile=p[0];$('who').textContent=profile.nome||user.email;$('role').textContent=profile.ruolo;$('userNav').classList.toggle('hidden',profile.ruolo==='IT');$('itNav').classList.toggle('hidden',profile.ruolo!=='IT');$('login').classList.add('hidden');$('app').classList.remove('hidden');profile.ruolo==='IT'?home():userHome();refreshNotifications();setInterval(refreshNotifications,30000)}
 $('loginForm').onsubmit=async e=>{e.preventDefault();$('loginErr').textContent='';try{const d=await api('/auth/v1/token?grant_type=password',{method:'POST',auth:false,body:{email:$('email').value.trim(),password:$('password').value}});save(d);user=d.user;await boot()}catch(err){$('loginErr').textContent=err.message}}
 $('logout').onclick=()=>{clear();location.reload()};document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>nav(b.dataset.view));boot();
