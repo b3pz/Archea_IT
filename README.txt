@@ -1,21 +1,13 @@
-ARCHEA SERVICE DESK V1.1
+ARCHEA SERVICE DESK V1.2
 
-Questa versione NON usa CDN esterni per Supabase.
-Il login e le chiamate al database usano direttamente le API HTTPS di Supabase con fetch.
+Fix:
+- corretto Project URL Supabase:
+  https://igfpkpcksllmofqfkoxkf.supabase.co
 
-COME AGGIORNARE GITHUB
-1. Estrai lo ZIP.
-2. Nel repository Archea_IT sostituisci:
-   - index.html
-   - styles.css
-   - app.js
-3. Fai Commit changes.
-4. Attendi 1-2 minuti e ricarica GitHub Pages con CTRL+F5.
+PER AGGIORNARE GITHUB
+1. Nel repository Archea_IT sostituisci solo app.js.
+2. Fai Commit changes.
+3. Attendi 1-2 minuti.
+4. Apri GitHub Pages e fai CTRL+F5.
 
-NON serve modificare Supabase se hai già:
-- profiles corretti
-- RLS/policies eseguite
-- Giuseppe = IT
-- Rider = USER
-
-Se compare un errore, ora viene mostrato direttamente sotto il login.
+Non serve modificare utenti, password, SQL o Supabase.
