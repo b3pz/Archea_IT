@@ -169,14 +169,95 @@ function bookingStatusBadge(s){
   return `<span class="badge ${cls}">${esc(s||'RICHIESTA')}</span>`;
 }
 function currentITName(){return profile?.nome||user?.email||'IT'}
+function isITRole(){return profile?.ruolo==='IT'||profile?.ruolo==='SUPER_IT'}
+function isSuperIT(){return profile?.ruolo==='SUPER_IT'}
+function isHR(){return profile?.ruolo==='HR'}
+function relTime(d){
+  if(!d)return '—';
+  const s=Math.max(0,Math.floor((Date.now()-new Date(d).getTime())/1000));
+  if(s<60)return 'adesso';
+  if(s<3600)return `${Math.floor(s/60)} min fa`;
+  if(s<86400)return `${Math.floor(s/3600)} h fa`;
+  return `${Math.floor(s/86400)} gg fa`;
+}
+function ageClass(d){
+  const h=(Date.now()-new Date(d).getTime())/3600000;
+  return h>=72?'age-old':h>=24?'age-mid':'';
+}
+
 
 
 async function userHome(){page('Service Desk','Apri una richiesta o controlla i tuoi ticket');const d=await select('tickets',`select=*&richiedente_email=eq.${encodeURIComponent(user.email)}&order=created_at.desc&limit=5`);$('content').innerHTML=`<div class="userhero"><h3>Come possiamo aiutarti?</h3><p>Puoi aprire ticket e vedere solo le tue richieste.</p><button id="openNow" class="primary">Apri un ticket</button></div><div class="panel"><h3>Le tue richieste recenti</h3>${table(d)}</div>`;$('openNow').onclick=()=>nav('new');wire()}
-async function home(){if(profile.ruolo!=='IT')return userHome();page('Dashboard','Panoramica del Service Desk');const d=await select('tickets','select=*&order=created_at.desc');$('content').innerHTML=`<div class="metrics"><div class="metric"><span>Da prendere in carico</span><b>${d.filter(x=>!x.assegnato_a && x.stato!=='CHIUSO').length}</b></div><div class="metric"><span>In lavorazione</span><b>${d.filter(x=>x.stato==='IN LAVORAZIONE').length}</b></div><div class="metric"><span>Urgenti</span><b>${d.filter(x=>x.priorita==='URGENTE' && x.stato!=='CHIUSO').length}</b></div><div class="metric"><span>Aperti totali</span><b>${d.filter(x=>x.stato!=='CHIUSO').length}</b></div></div><div class="panel"><h3>Ticket recenti</h3>${table(d.slice(0,8),true)}</div>`;wire()}
+async function home(){
+  if(!isITRole())return userHome();
+  page(isSuperIT()?'Dashboard SUPER IT':'Dashboard','Panoramica operativa del Service Desk');
+
+  const d=await select('tickets','select=*&order=updated_at.desc.nullslast,created_at.desc');
+
+  if(!isSuperIT()){
+    $('content').innerHTML=`
+      <div class="metrics">
+        <div class="metric"><span>Da prendere in carico</span><b>${d.filter(x=>!x.assigned_to&&x.stato!=='CHIUSO').length}</b></div>
+        <div class="metric"><span>In lavorazione</span><b>${d.filter(x=>x.stato==='IN LAVORAZIONE').length}</b></div>
+        <div class="metric"><span>Urgenti</span><b>${d.filter(x=>x.priorita==='URGENTE'&&x.stato!=='CHIUSO').length}</b></div>
+        <div class="metric"><span>Aperti visibili</span><b>${d.filter(x=>x.stato!=='CHIUSO').length}</b></div>
+      </div>
+      <div class="panel"><h3>Ticket recenti</h3>${table(d.slice(0,10),true)}</div>`;
+    wire();
+    return;
+  }
+
+  const its=await select('profiles','select=id,nome,email,ruolo&ruolo=in.(IT,SUPER_IT)&order=nome.asc');
+  const workload=its.map(itp=>({
+    nome:itp.nome||itp.email,
+    n:d.filter(t=>t.assigned_to===itp.id&&t.stato!=='CHIUSO').length
+  }));
+
+  $('content').innerHTML=`
+    <div class="metrics">
+      <div class="metric"><span>Non assegnati</span><b>${d.filter(x=>!x.assigned_to&&x.stato!=='CHIUSO').length}</b></div>
+      <div class="metric"><span>In lavorazione</span><b>${d.filter(x=>x.stato==='IN LAVORAZIONE').length}</b></div>
+      <div class="metric"><span>Urgenti</span><b>${d.filter(x=>x.priorita==='URGENTE'&&x.stato!=='CHIUSO').length}</b></div>
+      <div class="metric"><span>Senza attività &gt;48h</span><b>${d.filter(x=>x.stato!=='CHIUSO'&&((Date.now()-new Date(x.updated_at||x.created_at))/3600000)>48).length}</b></div>
+    </div>
+    <div class="dashboard-grid">
+      <div class="panel">
+        <h3>Carico team IT</h3>
+        ${workload.map(w=>`<div class="workload-row"><span>${esc(w.nome)}</span><b>${w.n}</b></div>`).join('')}
+      </div>
+      <div class="panel">
+        <h3>Ticket più vecchi ancora aperti</h3>
+        ${table([...d].filter(x=>x.stato!=='CHIUSO').sort((a,b)=>new Date(a.created_at)-new Date(b.created_at)).slice(0,6),true)}
+      </div>
+    </div>`;
+  wire();
+}
 function newTicket(){
   page('Nuovo ticket','Apri una richiesta al team IT');
+
   $('content').innerHTML=`<div class="panel">
     <form id="ticketForm" class="formgrid">
+
+      ${isITRole()?`<label>Richiedente
+        <select id="requesterMode">
+          <option value="ME">Me stesso</option>
+          <option value="OTHER">Altro utente</option>
+        </select>
+      </label>
+      <label id="requesterEmailWrap" class="hidden">Email richiedente
+        <input id="requesterEmail" type="email" placeholder="nome.cognome@archea.it">
+      </label>
+      <label>Origine
+        <select id="origin">
+          <option>Portale</option>
+          <option>Telefono</option>
+          <option>Presenza in IT</option>
+          <option>Email</option>
+          <option>Altro</option>
+        </select>
+      </label>
+      <label>Sede<input id="ticketSite" placeholder="Firenze, Milano, Roma..."></label>`:''}
+
       <label>Categoria<select id="cat" required>
         <option value="">Seleziona...</option>
         <option>Supporto IT</option>
@@ -194,7 +275,7 @@ function newTicket(){
       <div id="bookingFields" class="full booking-fields hidden">
         <div class="section-title">
           <h3>Richiesta materiale</h3>
-          <p>Indica ciò che ti serve. La disponibilità sarà confermata dal reparto IT.</p>
+          <p>La disponibilità verrà verificata dal reparto IT.</p>
         </div>
         <div class="formgrid">
           <label>Materiale<select id="matType">
@@ -208,12 +289,13 @@ function newTicket(){
           <label>Quantità<input id="matQty" type="number" min="1" value="1"></label>
           <label>Data ritiro<input id="pickupDate" type="date"></label>
           <label>Restituzione prevista<input id="returnDate" type="date"></label>
-          <label>Sede<input id="bookSite" placeholder="Firenze, Milano, Roma..."></label>
+          <label>Sede<input id="bookSite"></label>
           <label>Motivo / progetto<input id="bookReason"></label>
-          <label class="full">Accessori richiesti<input id="bookAccessories" placeholder="Alimentatore, mouse, adattatori..."></label>
-          <label class="full">Note materiale<textarea id="bookNotes" rows="3"></textarea></label>
+          <label class="full">Accessori richiesti<input id="bookAccessories"></label>
+          <label class="full">Note materiale <span class="optional">(facoltative)</span>
+            <textarea id="bookNotes" rows="3"></textarea>
+          </label>
         </div>
-        <div class="info-box">La richiesta non garantisce automaticamente la disponibilità. Il reparto IT la verificherà e assegnerà il materiale preciso.</div>
       </div>
 
       <label class="full">Descrizione<textarea id="desc" rows="7" required></textarea></label>
@@ -222,44 +304,24 @@ function newTicket(){
     <p id="result"></p>
   </div>`;
 
-  const DRAFT_KEY='archea_ticket_draft';
-  const bookingIds=['matType','matQty','pickupDate','returnDate','bookSite','bookReason','bookAccessories','bookNotes'];
+  if(isITRole()){
+    $('requesterMode').onchange=()=>{
+      const other=$('requesterMode').value==='OTHER';
+      $('requesterEmailWrap').classList.toggle('hidden',!other);
+      $('requesterEmail').required=other;
+    };
+  }
 
+  const bookingIds=['matType','matQty','pickupDate','returnDate','bookSite','bookReason','bookAccessories','bookNotes'];
   const toggleBooking=()=>{
     const on=$('cat').value==='Prenotazione materiale';
     $('bookingFields').classList.toggle('hidden',!on);
     bookingIds.forEach(id=>{
-      if($(id)) $(id).required = on && ['matType','pickupDate','returnDate','bookSite','bookReason'].includes(id);
+      if($(id))$(id).required=on&&['matType','pickupDate','returnDate','bookSite','bookReason'].includes(id);
     });
   };
-
-  try{
-    const draft=JSON.parse(localStorage.getItem(DRAFT_KEY)||'null');
-    if(draft){
-      $('cat').value=draft.categoria||'';
-      $('sub').value=draft.oggetto||'';
-      $('desc').value=draft.descrizione||'';
-      bookingIds.forEach(id=>{if($(id)&&draft[id]!==undefined)$(id).value=draft[id]});
-    }
-  }catch{}
+  $('cat').onchange=toggleBooking;
   toggleBooking();
-
-  const saveDraft=()=>{
-    const d={
-      categoria:$('cat').value,
-      oggetto:$('sub').value,
-      descrizione:$('desc').value,
-      saved_at:new Date().toISOString()
-    };
-    bookingIds.forEach(id=>{if($(id))d[id]=$(id).value});
-    localStorage.setItem(DRAFT_KEY,JSON.stringify(d));
-  };
-
-  ['cat','sub','desc',...bookingIds].forEach(id=>{
-    if(!$(id))return;
-    $(id).addEventListener('input',saveDraft);
-    $(id).addEventListener('change',()=>{if(id==='cat')toggleBooking();saveDraft()});
-  });
 
   $('ticketForm').onsubmit=async e=>{
     e.preventDefault();
@@ -267,9 +329,18 @@ function newTicket(){
 
     try{
       const isBooking=$('cat').value==='Prenotazione materiale';
+      if(isBooking&&$('returnDate').value<$('pickupDate').value)
+        throw new Error('La restituzione non può essere precedente al ritiro.');
 
-      if(isBooking && $('returnDate').value < $('pickupDate').value){
-        throw new Error('La data di restituzione non può essere precedente al ritiro.');
+      let requesterEmail=user.email;
+      let requesterName=profile.nome;
+
+      if(isITRole()&&$('requesterMode').value==='OTHER'){
+        requesterEmail=$('requesterEmail').value.trim().toLowerCase();
+        if(!requesterEmail.endsWith('@archea.it'))
+          throw new Error('Inserisci una mail aziendale @archea.it.');
+        const p=await select('profiles',`select=*&email=eq.${encodeURIComponent(requesterEmail)}`);
+        requesterName=p[0]?.nome||requesterEmail;
       }
 
       const rows=await insert('tickets',{
@@ -278,8 +349,12 @@ function newTicket(){
         descrizione:$('desc').value.trim(),
         stato:'APERTO',
         priorita:'NORMALE',
-        richiedente_nome:profile.nome,
-        richiedente_email:user.email
+        richiedente_nome:requesterName,
+        richiedente_email:requesterEmail,
+        created_by:user.id,
+        created_by_name:profile.nome,
+        origine:isITRole()?$('origin').value:'Portale',
+        sede:isITRole()?($('ticketSite').value.trim()||null):null
       });
 
       const d=rows[0],n=num(d.id);
@@ -288,8 +363,8 @@ function newTicket(){
       if(isBooking){
         await insert('material_bookings',{
           ticket_id:d.id,
-          requester_name:profile.nome,
-          requester_email:user.email,
+          requester_name:requesterName,
+          requester_email:requesterEmail,
           material_type:$('matType').value,
           quantity:+$('matQty').value||1,
           pickup_date:$('pickupDate').value,
@@ -303,65 +378,58 @@ function newTicket(){
       }
 
       try{
-        await api('/functions/v1/telegram-new-ticket',{
-          method:'POST',
-          body:{ticket_id:d.id}
-        });
-      }catch(e){
-        console.warn('Telegram non inviato:',e.message);
-      }
+        await api('/functions/v1/telegram-new-ticket',{method:'POST',body:{ticket_id:d.id}});
+      }catch(e){console.warn('Telegram non inviato:',e.message)}
 
       await insert('ticket_history',{
         ticket_id:d.id,
-        evento:isBooking?'Ticket + richiesta materiale creati':'Ticket creato',
+        evento:isITRole()&&requesterEmail!==user.email
+          ?`Ticket creato da ${profile.nome} per conto di ${requesterEmail}`
+          :'Ticket creato',
         autore:profile.nome
       },false);
 
-      localStorage.removeItem(DRAFT_KEY);
       e.target.reset();
       toggleBooking();
       $('result').textContent=`Ticket ${n} creato.`;
       toast('Ticket creato');
       refreshNotifications();
     }catch(err){
-      saveDraft();
       $('result').textContent=err.message;
     }
   };
 }
 async function mine(){page('I miei ticket','Storico delle tue richieste');const d=await select('tickets',`select=*&richiedente_email=eq.${encodeURIComponent(user.email)}&order=created_at.desc`);$('content').innerHTML=`<div class="panel">${table(d)}</div>`;wire()}
 async function it(){
-  if(profile.ruolo!=='IT')return userHome();
+  if(!isITRole())return userHome();
   page('Gestione IT','Coda operativa del reparto');
 
-  const d=await select('tickets','select=*&order=created_at.desc');
-  let filter='OPEN';
-  let search='';
-  let category='';
-  let order='old';
+  const d=await select('tickets','select=*&order=updated_at.desc.nullslast,created_at.desc');
+  const its=await select('profiles','select=id,nome,email,ruolo&ruolo=in.(IT,SUPER_IT)&order=nome.asc');
+
+  let filter='OPEN',search='',category='',assignee='',order='old';
 
   const categories=[...new Set(d.map(x=>x.categoria).filter(Boolean))].sort();
 
   $('content').innerHTML=`
     <div class="queue-stats">
       <button class="queue-card active" data-filter="OPEN"><span>Aperti</span><b>${d.filter(x=>x.stato!=='CHIUSO').length}</b></button>
-      <button class="queue-card" data-filter="UNASSIGNED"><span>Non assegnati</span><b>${d.filter(x=>!x.assegnato_a&&x.stato!=='CHIUSO').length}</b></button>
-      <button class="queue-card" data-filter="MINE"><span>I miei</span><b>${d.filter(x=>x.assegnato_a===currentITName()&&x.stato!=='CHIUSO').length}</b></button>
+      <button class="queue-card" data-filter="UNASSIGNED"><span>Non assegnati</span><b>${d.filter(x=>!x.assigned_to&&x.stato!=='CHIUSO').length}</b></button>
+      <button class="queue-card" data-filter="MINE"><span>I miei</span><b>${d.filter(x=>x.assigned_to===user.id&&x.stato!=='CHIUSO').length}</b></button>
       <button class="queue-card" data-filter="URGENT"><span>Urgenti</span><b>${d.filter(x=>x.priorita==='URGENTE'&&x.stato!=='CHIUSO').length}</b></button>
-      <button class="queue-card" data-filter="WAITING"><span>In attesa</span><b>${d.filter(x=>x.stato==='IN ATTESA').length}</b></button>
+      <button class="queue-card" data-filter="STALE"><span>Fermi &gt;48h</span><b>${d.filter(x=>x.stato!=='CHIUSO'&&((Date.now()-new Date(x.updated_at||x.created_at))/3600000)>48).length}</b></button>
     </div>
 
     <div class="panel">
-      <div class="queue-toolbar">
-        <input id="queueSearch" placeholder="Cerca ticket, nome, oggetto...">
-        <select id="queueCategory">
-          <option value="">Tutte le categorie</option>
-          ${categories.map(c=>`<option>${esc(c)}</option>`).join('')}
-        </select>
+      <div class="queue-toolbar advanced">
+        <input id="queueSearch" placeholder="Cerca ticket, nome, email, oggetto...">
+        <select id="queueCategory"><option value="">Tutte le categorie</option>${categories.map(c=>`<option>${esc(c)}</option>`).join('')}</select>
+        ${isSuperIT()?`<select id="queueAssignee"><option value="">Tutti gli IT</option><option value="UNASSIGNED">Non assegnati</option>${its.map(i=>`<option value="${i.id}">${esc(i.nome||i.email)}</option>`).join('')}</select>`:''}
         <select id="queueOrder">
           <option value="old">Più vecchi prima</option>
           <option value="new">Più recenti prima</option>
           <option value="priority">Priorità</option>
+          <option value="activity">Ultima attività</option>
         </select>
       </div>
       <div id="queueTable"></div>
@@ -371,59 +439,71 @@ async function it(){
 
   const render=()=>{
     let rows=d.filter(x=>{
-      if(filter==='OPEN' && x.stato==='CHIUSO')return false;
-      if(filter==='UNASSIGNED' && (x.assegnato_a||x.stato==='CHIUSO'))return false;
-      if(filter==='MINE' && (x.assegnato_a!==currentITName()||x.stato==='CHIUSO'))return false;
-      if(filter==='URGENT' && (x.priorita!=='URGENTE'||x.stato==='CHIUSO'))return false;
-      if(filter==='WAITING' && x.stato!=='IN ATTESA')return false;
-      if(category && x.categoria!==category)return false;
+      if(filter==='OPEN'&&x.stato==='CHIUSO')return false;
+      if(filter==='UNASSIGNED'&&(x.assigned_to||x.stato==='CHIUSO'))return false;
+      if(filter==='MINE'&&(x.assigned_to!==user.id||x.stato==='CHIUSO'))return false;
+      if(filter==='URGENT'&&(x.priorita!=='URGENTE'||x.stato==='CHIUSO'))return false;
+      if(filter==='STALE'&&(x.stato==='CHIUSO'||((Date.now()-new Date(x.updated_at||x.created_at))/3600000)<=48))return false;
+      if(category&&x.categoria!==category)return false;
+      if(assignee==='UNASSIGNED'&&x.assigned_to)return false;
+      if(assignee&&assignee!=='UNASSIGNED'&&x.assigned_to!==assignee)return false;
       if(search){
-        const hay=`${x.numero_ticket||''} ${x.richiedente_nome||''} ${x.richiedente_email||''} ${x.oggetto||''} ${x.categoria||''}`.toLowerCase();
-        if(!hay.includes(search.toLowerCase()))return false;
+        const h=`${x.numero_ticket||''} ${x.richiedente_nome||''} ${x.richiedente_email||''} ${x.oggetto||''} ${x.categoria||''} ${x.sede||''}`.toLowerCase();
+        if(!h.includes(search.toLowerCase()))return false;
       }
       return true;
     });
 
     rows=[...rows].sort((a,b)=>{
-      if(order==='priority'){
-        return (rank[b.priorita||'NORMALE']-rank[a.priorita||'NORMALE']) || new Date(a.created_at)-new Date(b.created_at);
-      }
-      return order==='new'
-        ? new Date(b.created_at)-new Date(a.created_at)
-        : new Date(a.created_at)-new Date(b.created_at);
+      if(order==='priority')return (rank[b.priorita||'NORMALE']-rank[a.priorita||'NORMALE'])||new Date(a.created_at)-new Date(b.created_at);
+      if(order==='new')return new Date(b.created_at)-new Date(a.created_at);
+      if(order==='activity')return new Date(b.updated_at||b.created_at)-new Date(a.updated_at||a.created_at);
+      return new Date(a.created_at)-new Date(b.created_at);
     });
 
-    $('queueTable').innerHTML=table(rows,true,true);
-    wire();
+    $('queueTable').innerHTML=`
+      <div class="tablewrap"><table>
+        <thead><tr><th>Ticket</th><th>Assegnato</th><th>Priorità</th><th>Richiedente</th><th>Categoria</th><th>Stato</th><th>Ultima attività</th><th></th></tr></thead>
+        <tbody>${rows.map(x=>`<tr class="${ageClass(x.updated_at||x.created_at)}">
+          <td><b class="ticket-link" data-open="${x.id}">${x.numero_ticket||num(x.id)}</b><small class="subline">${esc(x.sede||'')}</small></td>
+          <td>${x.assegnato_a?esc(x.assegnato_a):'<span class="unassigned">NON ASSEGNATO</span>'}</td>
+          <td>${priorityBadge(x.priorita)}</td>
+          <td>${esc(x.richiedente_nome||x.richiedente_email)}</td>
+          <td>${esc(x.categoria)}</td>
+          <td>${badge(x.stato)}</td>
+          <td>${relTime(x.updated_at||x.created_at)}</td>
+          <td>${!x.assigned_to&&x.stato!=='CHIUSO'?`<button class="secondary compact take-row" data-take="${x.id}">Prendi</button>`:''}</td>
+        </tr>`).join('')}</tbody>
+      </table></div>`;
 
-    document.querySelectorAll('[data-take]').forEach(btn=>{
-      btn.onclick=async e=>{
-        e.stopPropagation();
-        const id=+btn.dataset.take;
-        await update('tickets',`id=eq.${id}`,{
-          stato:'IN LAVORAZIONE',
-          assegnato_a:currentITName()
-        });
-        toast('Ticket preso in carico');
-        return it();
-      };
+    document.querySelectorAll('[data-open]').forEach(x=>x.onclick=()=>detail(+x.dataset.open));
+    document.querySelectorAll('[data-take]').forEach(btn=>btn.onclick=async()=>{
+      const id=+btn.dataset.take;
+      await update('tickets',`id=eq.${id}`,{
+        assigned_to:user.id,
+        assegnato_a:currentITName(),
+        stato:'IN LAVORAZIONE'
+      });
+      await insert('ticket_history',{ticket_id:id,evento:`Preso in carico da ${currentITName()}`,autore:currentITName()},false);
+      toast('Ticket preso in carico');
+      it();
     });
   };
 
   document.querySelectorAll('[data-filter]').forEach(b=>b.onclick=()=>{
     filter=b.dataset.filter;
     document.querySelectorAll('[data-filter]').forEach(x=>x.classList.remove('active'));
-    b.classList.add('active');
-    render();
+    b.classList.add('active');render();
   });
   $('queueSearch').oninput=e=>{search=e.target.value;render()};
   $('queueCategory').onchange=e=>{category=e.target.value;render()};
+  if($('queueAssignee'))$('queueAssignee').onchange=e=>{assignee=e.target.value;render()};
   $('queueOrder').onchange=e=>{order=e.target.value;render()};
   render();
 }
-async function calendar(){if(profile.ruolo!=='IT')return userHome();page('Calendario','Appuntamenti collegati ai ticket');const d=await select('appointments','select=*,tickets(numero_ticket,oggetto,richiedente_nome)&order=start_at.asc');$('content').innerHTML=`<div class="panel"><h3>Appuntamenti</h3>${d.length?d.map(a=>`<div class="appointment"><b>${fmt(a.start_at)} • ${esc(a.modalita)}</b><div>${esc(a.tickets?.numero_ticket||'')} — ${esc(a.tickets?.oggetto||'')}</div><small>${esc(a.tickets?.richiedente_nome||'')} • ${a.durata_minuti} min</small></div>`).join(''):'<p>Nessun appuntamento.</p>'}</div>`}
+async function calendar(){if(!isITRole())return userHome();page('Calendario','Appuntamenti collegati ai ticket');const d=await select('appointments','select=*,tickets(numero_ticket,oggetto,richiedente_nome)&order=start_at.asc');$('content').innerHTML=`<div class="panel"><h3>Appuntamenti</h3>${d.length?d.map(a=>`<div class="appointment"><b>${fmt(a.start_at)} • ${esc(a.modalita)}</b><div>${esc(a.tickets?.numero_ticket||'')} — ${esc(a.tickets?.oggetto||'')}</div><small>${esc(a.tickets?.richiedente_nome||'')} • ${a.durata_minuti} min</small></div>`).join(''):'<p>Nessun appuntamento.</p>'}</div>`}
 async function bookings(){
-  if(profile.ruolo!=='IT')return userHome();
+  if(!isITRole())return userHome();
   page('Prenotazioni','Richieste materiale e verbali di consegna');
 
   const rows=await select('material_bookings',
@@ -497,7 +577,7 @@ async function bookings(){
 }
 
 async function bookingDetail(id){
-  if(profile.ruolo!=='IT')return userHome();
+  if(!isITRole())return userHome();
   const rows=await select('material_bookings',`select=*,tickets(numero_ticket,oggetto,stato,priorita,richiedente_nome,richiedente_email)&id=eq.${id}`);
   if(!rows.length)return;
   const b=rows[0];
@@ -507,10 +587,7 @@ async function bookingDetail(id){
   $('content').innerHTML=`
     <div class="panel booking-summary">
       <div class="it-management-head">
-        <div>
-          <h3>${esc(b.material_type)} × ${b.quantity}</h3>
-          <p class="muted-line">${esc(b.requester_name||b.requester_email)} • ${esc(b.site)}</p>
-        </div>
+        <div><h3>${esc(b.material_type)} × ${b.quantity}</h3><p class="muted-line">${esc(b.requester_name||b.requester_email)} • ${esc(b.site)}</p></div>
         ${bookingStatusBadge(b.status)}
       </div>
       <div class="booking-grid">
@@ -527,36 +604,40 @@ async function bookingDetail(id){
       <h3>Gestione IT materiale</h3>
       <div class="formgrid">
         <label>Stato prenotazione<select id="bookStatus">
-          <option>RICHIESTA</option>
-          <option>DA VERIFICARE</option>
-          <option>CONFERMATA</option>
-          <option>CONSEGNATA</option>
-          <option>RESTITUITA</option>
+          <option>RICHIESTA</option><option>DA VERIFICARE</option><option>CONFERMATA</option><option>PRONTA</option><option>CONSEGNATA</option><option>RESTITUITA</option>
         </select></label>
-        <label>Codice asset<input id="assetCode" value="${esc(b.asset_code||'')}" placeholder="es. A0345"></label>
-        <label>Descrizione / modello<input id="assetModel" value="${esc(b.asset_model||'')}" placeholder="es. Dell Precision 5680"></label>
+        <label>Codice asset<input id="assetCode" value="${esc(b.asset_code||'')}"></label>
+        <label>Descrizione / modello<input id="assetModel" value="${esc(b.asset_model||'')}"></label>
         <label>Seriale<input id="assetSerial" value="${esc(b.asset_serial||'')}"></label>
-        <label class="full">Accessori consegnati<input id="deliveredAccessories" value="${esc(b.delivered_accessories||'')}" placeholder="Alimentatore, mouse, adattatore..."></label>
-        <label class="full">Note IT<textarea id="bookItNotes" rows="3">${esc(b.it_notes||'')}</textarea></label>
+        <label class="full">Accessori consegnati<input id="deliveredAccessories" value="${esc(b.delivered_accessories||'')}"></label>
+        <label>Data restituzione effettiva<input id="actualReturn" type="date" value="${b.actual_return_date||''}"></label>
+        <label>Stato al rientro<select id="returnCondition">
+          <option value="">—</option><option>OK</option><option>DA VERIFICARE</option><option>DANNEGGIATO</option><option>ACCESSORIO MANCANTE</option>
+        </select></label>
+        <label class="full">Note rientro<textarea id="returnNotes" rows="2">${esc(b.return_notes||'')}</textarea></label>
+        <label class="full">Note IT <span class="optional">(facoltative)</span><textarea id="bookItNotes" rows="3">${esc(b.it_notes||'')}</textarea></label>
       </div>
       <div class="button-row">
         <button id="saveBooking" class="primary">Salva prenotazione</button>
         <button id="printDelivery" class="secondary">Genera verbale / PDF</button>
       </div>
-      <p class="muted-line">Il verbale viene generato al momento per stampa o salvataggio PDF. Non viene archiviato nel database.</p>
+      <p class="muted-line">Il documento viene generato al momento e non viene archiviato nel database.</p>
     </div>`;
 
   $('bookStatus').value=b.status||'RICHIESTA';
+  $('returnCondition').value=b.return_condition||'';
   $('openBookingTicket').onclick=()=>detail(b.ticket_id);
 
   $('saveBooking').onclick=async()=>{
-    const status=$('bookStatus').value;
     await update('material_bookings',`id=eq.${id}`,{
-      status,
+      status:$('bookStatus').value,
       asset_code:$('assetCode').value.trim()||null,
       asset_model:$('assetModel').value.trim()||null,
       asset_serial:$('assetSerial').value.trim()||null,
       delivered_accessories:$('deliveredAccessories').value.trim()||null,
+      actual_return_date:$('actualReturn').value||null,
+      return_condition:$('returnCondition').value||null,
+      return_notes:$('returnNotes').value.trim()||null,
       it_notes:$('bookItNotes').value.trim()||null,
       prepared_by:currentITName(),
       updated_at:new Date().toISOString()
@@ -565,20 +646,20 @@ async function bookingDetail(id){
     bookingDetail(id);
   };
 
-  $('printDelivery').onclick=async()=>{
-    const live={
-      ...b,
+  $('printDelivery').onclick=()=>{
+    const live={...b,
       status:$('bookStatus').value,
       asset_code:$('assetCode').value.trim(),
       asset_model:$('assetModel').value.trim(),
       asset_serial:$('assetSerial').value.trim(),
       delivered_accessories:$('deliveredAccessories').value.trim(),
+      actual_return_date:$('actualReturn').value,
+      return_condition:$('returnCondition').value,
+      return_notes:$('returnNotes').value.trim(),
       it_notes:$('bookItNotes').value.trim(),
       prepared_by:currentITName()
     };
-    if(!live.asset_code){
-      return toast('Inserisci prima il codice asset');
-    }
+    if(!live.asset_code)return toast('Inserisci prima il codice asset');
     printDeliverySheet(live);
   };
 }
@@ -588,74 +669,348 @@ function printDeliverySheet(b){
   if(!w)return toast('Il browser ha bloccato la finestra di stampa');
 
   const ticket=b.tickets?.numero_ticket||'';
-  const html=`<!doctype html>
-  <html lang="it"><head><meta charset="utf-8"><title>Verbale ${esc(ticket)}</title>
+  const html=`<!doctype html><html lang="it"><head><meta charset="utf-8"><title>Verbale ${esc(ticket)}</title>
   <style>
-    @page{size:A4;margin:18mm}
-    body{font-family:Arial,Helvetica,sans-serif;color:#111;margin:0;font-size:12px}
-    .head{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #111;padding-bottom:14px;margin-bottom:24px}
-    .logo{width:190px}.title{text-align:right}.title h1{font-size:19px;margin:0 0 6px}.muted{color:#666}
-    .section{margin:22px 0}.section h2{font-size:13px;text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid #bbb;padding-bottom:6px}
-    .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px 30px}
-    .field span{display:block;color:#666;font-size:10px;text-transform:uppercase;margin-bottom:3px}.field b{font-size:12px}
-    .box{border:1px solid #bbb;padding:12px;min-height:44px}
-    .signatures{display:grid;grid-template-columns:1fr 1fr;gap:50px;margin-top:65px}
-    .signature{border-top:1px solid #111;padding-top:7px;text-align:center}
-    footer{position:fixed;bottom:0;left:0;right:0;font-size:9px;color:#777;text-align:center}
-    .no-print{margin:0 0 16px;padding:10px;background:#f1f1f1;text-align:center}
+    @page{size:A4;margin:16mm}body{font-family:Arial,Helvetica,sans-serif;color:#111;margin:0;font-size:11px}
+    .head{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #111;padding-bottom:12px;margin-bottom:18px}
+    .logo{width:180px}.title{text-align:right}.title h1{font-size:17px;margin:0 0 5px}
+    .section{margin:16px 0}.section h2{font-size:12px;text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid #bbb;padding-bottom:5px}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px 24px}.field span{display:block;color:#666;font-size:9px;text-transform:uppercase;margin-bottom:3px}
+    .box{border:1px solid #bbb;padding:9px;min-height:34px}.signatures{display:grid;grid-template-columns:1fr 1fr;gap:42px;margin-top:42px}
+    .signature{border-top:1px solid #111;padding-top:6px;text-align:center}.return{margin-top:28px;border-top:2px solid #111;padding-top:14px}
+    footer{position:fixed;bottom:0;left:0;right:0;font-size:8px;color:#777;text-align:center}.no-print{margin-bottom:12px;padding:8px;background:#f1f1f1;text-align:center}
     @media print{.no-print{display:none}}
   </style></head><body>
-    <div class="no-print">Usa Stampa e scegli “Salva come PDF” oppure stampa direttamente il documento.</div>
-    <div class="head">
-      <img class="logo" src="${location.href.replace(/[^/]*$/,'')}logo_archea.png">
-      <div class="title"><h1>VERBALE DI CONSEGNA MATERIALE</h1><div>${esc(ticket)}</div></div>
-    </div>
+    <div class="no-print">Stampa il documento oppure scegli “Salva come PDF”. Il file non viene caricato nel Service Desk.</div>
+    <div class="head"><img class="logo" src="${location.href.replace(/[^/]*$/,'')}logo_archea.png"><div class="title"><h1>VERBALE CONSEGNA / RESTITUZIONE</h1><div>${esc(ticket)}</div></div></div>
 
-    <div class="section">
-      <h2>Assegnatario</h2>
-      <div class="grid">
-        <div class="field"><span>Nome</span><b>${esc(b.requester_name||b.requester_email)}</b></div>
-        <div class="field"><span>Sede</span><b>${esc(b.site)}</b></div>
-        <div class="field"><span>Data consegna / ritiro</span><b>${dateOnly(b.pickup_date)}</b></div>
-        <div class="field"><span>Restituzione prevista</span><b>${dateOnly(b.planned_return_date)}</b></div>
-        <div class="field"><span>Motivo / progetto</span><b>${esc(b.reason)}</b></div>
-        <div class="field"><span>Preparato da IT</span><b>${esc(b.prepared_by||'')}</b></div>
-      </div>
-    </div>
+    <div class="section"><h2>Consegna</h2><div class="grid">
+      <div class="field"><span>Assegnatario</span><b>${esc(b.requester_name||b.requester_email)}</b></div>
+      <div class="field"><span>Sede</span><b>${esc(b.site)}</b></div>
+      <div class="field"><span>Data consegna</span><b>${dateOnly(b.pickup_date)}</b></div>
+      <div class="field"><span>Restituzione prevista</span><b>${dateOnly(b.planned_return_date)}</b></div>
+      <div class="field"><span>Motivo / progetto</span><b>${esc(b.reason)}</b></div>
+      <div class="field"><span>Preparato da IT</span><b>${esc(b.prepared_by||'')}</b></div>
+    </div></div>
 
-    <div class="section">
-      <h2>Materiale consegnato</h2>
-      <div class="grid">
-        <div class="field"><span>Tipologia</span><b>${esc(b.material_type)} × ${b.quantity}</b></div>
-        <div class="field"><span>Codice asset</span><b>${esc(b.asset_code||'—')}</b></div>
-        <div class="field"><span>Modello / descrizione</span><b>${esc(b.asset_model||'—')}</b></div>
-        <div class="field"><span>Seriale</span><b>${esc(b.asset_serial||'—')}</b></div>
-      </div>
-    </div>
+    <div class="section"><h2>Materiale</h2><div class="grid">
+      <div class="field"><span>Tipologia</span><b>${esc(b.material_type)} × ${b.quantity}</b></div>
+      <div class="field"><span>Codice asset</span><b>${esc(b.asset_code||'—')}</b></div>
+      <div class="field"><span>Modello</span><b>${esc(b.asset_model||'—')}</b></div>
+      <div class="field"><span>Seriale</span><b>${esc(b.asset_serial||'—')}</b></div>
+    </div></div>
 
     <div class="section"><h2>Accessori</h2><div class="box">${esc(b.delivered_accessories||b.requested_accessories||'Nessun accessorio indicato')}</div></div>
-    <div class="section"><h2>Note</h2><div class="box">${esc(b.it_notes||b.requester_notes||'')}</div></div>
+    <div class="section"><h2>Note consegna</h2><div class="box">${esc(b.it_notes||b.requester_notes||'')}</div></div>
 
-    <div class="section">
-      <p>Con la firma il destinatario dichiara di aver ricevuto il materiale sopra indicato e si impegna a restituirlo nelle condizioni in cui è stato consegnato, salvo normale usura.</p>
+    <div class="signatures"><div class="signature">Firma assegnatario alla consegna</div><div class="signature">Firma IT alla consegna</div></div>
+
+    <div class="return">
+      <div class="section"><h2>Restituzione</h2><div class="grid">
+        <div class="field"><span>Data restituzione effettiva</span><b>${b.actual_return_date?dateOnly(b.actual_return_date):'________________'}</b></div>
+        <div class="field"><span>Stato materiale al rientro</span><b>${esc(b.return_condition||'________________')}</b></div>
+      </div></div>
+      <div class="section"><h2>Note rientro</h2><div class="box">${esc(b.return_notes||'')}</div></div>
+      <div class="signatures"><div class="signature">Firma assegnatario alla restituzione</div><div class="signature">Firma IT al ritiro</div></div>
     </div>
 
-    <div class="signatures">
-      <div class="signature">Firma assegnatario</div>
-      <div class="signature">Firma reparto IT</div>
-    </div>
-
-    <footer>Archea Associati — Documento generato da Archea Service Desk — Dipartimento IT</footer>
+    <footer>Archea Associati — Archea Service Desk — Dipartimento IT</footer>
     <script>window.onload=()=>setTimeout(()=>window.print(),500)<\/script>
   </body></html>`;
+  w.document.open();w.document.write(html);w.document.close();
+}
 
-  w.document.open();
-  w.document.write(html);
-  w.document.close();
+
+async function hrNewMovement(){
+  if(!isHR()&&!isITRole())return userHome();
+  page('Nuovo movimento','Registra un movimento con impatto sul reparto IT');
+
+  $('content').innerHTML=`
+    <div class="panel">
+      <form id="hrMoveForm" class="formgrid">
+        <label>Tipo movimento
+          <select id="moveType" required>
+            <option value="">Seleziona...</option>
+            <option>NUOVO INGRESSO</option>
+            <option>USCITA</option>
+            <option>CAMBIO POSTAZIONE</option>
+            <option>CAMBIO SEDE</option>
+          </select>
+        </label>
+        <label>Data movimento<input id="moveDate" type="date" required></label>
+
+        <label>Nome<input id="personName" required></label>
+        <label>Cognome<input id="personSurname" required></label>
+        <label>Email aziendale<input id="personEmail" type="email" placeholder="nome.cognome@archea.it"></label>
+        <label>Sede attuale<input id="currentSite"></label>
+        <label>Nuova sede<input id="newSite"></label>
+        <label>Postazione attuale<input id="currentDesk"></label>
+        <label>Nuova postazione<input id="newDesk"></label>
+        <label class="full">Note <span class="optional">(facoltative)</span>
+          <textarea id="moveNotes" rows="4"></textarea>
+        </label>
+
+        <div class="full info-box">
+          Il movimento crea automaticamente un ticket IT e viene salvato nello storico HR.
+          Per ora non viene ancora scritto direttamente nel file Excel HR.
+        </div>
+
+        <div class="full">
+          <button class="primary">Registra movimento</button>
+        </div>
+      </form>
+      <p id="hrMoveResult"></p>
+    </div>`;
+
+  $('moveDate').value=new Date().toISOString().slice(0,10);
+
+  $('hrMoveForm').onsubmit=async e=>{
+    e.preventDefault();
+    $('hrMoveResult').textContent='';
+
+    try{
+      const type=$('moveType').value;
+      const email=$('personEmail').value.trim().toLowerCase();
+      const name=$('personName').value.trim();
+      const surname=$('personSurname').value.trim();
+
+      if(email && !email.endsWith('@archea.it')){
+        throw new Error('Se inserita, la mail deve essere aziendale @archea.it.');
+      }
+
+      const payload={
+        movement_type:type,
+        movement_date:$('moveDate').value,
+        person_name:name,
+        person_surname:surname,
+        person_email:email||null,
+        current_site:$('currentSite').value.trim()||null,
+        new_site:$('newSite').value.trim()||null,
+        current_desk:$('currentDesk').value.trim()||null,
+        new_desk:$('newDesk').value.trim()||null,
+        notes:$('moveNotes').value.trim()||null,
+        created_by:user.id,
+        created_by_email:user.email,
+        created_by_name:profile.nome,
+        status:'DA VERIFICARE'
+      };
+
+      const checkParams = new URLSearchParams();
+      checkParams.set('select','id,movement_type,movement_date,person_email,person_name,person_surname,status');
+      if(email) checkParams.set('person_email','eq.'+email);
+
+      let possible=[];
+      if(email){
+        possible=await select('hr_movements',checkParams.toString());
+      }else{
+        possible=await select('hr_movements',
+          `select=id,movement_type,movement_date,person_email,person_name,person_surname,status&person_name=ilike.${encodeURIComponent(name)}&person_surname=ilike.${encodeURIComponent(surname)}`
+        );
+      }
+
+      let duplicate=false;
+      if(type==='NUOVO INGRESSO'){
+        duplicate=possible.some(x=>x.movement_type==='NUOVO INGRESSO'&&x.status!=='ANNULLATO');
+      }else if(type==='USCITA'){
+        duplicate=possible.some(x=>x.movement_type==='USCITA'&&x.status!=='ANNULLATO');
+      }else{
+        duplicate=possible.some(x=>x.movement_type===type&&x.movement_date===$('moveDate').value&&x.status!=='ANNULLATO');
+      }
+
+      if(duplicate){
+        throw new Error('Possibile duplicato rilevato. Il movimento non è stato creato: verifica prima lo storico.');
+      }
+
+      const ticketDesc = [
+        `Movimento: ${type}`,
+        `Persona: ${name} ${surname}`,
+        email?`Email: ${email}`:'',
+        $('currentSite').value?`Sede attuale: ${$('currentSite').value.trim()}`:'',
+        $('newSite').value?`Nuova sede: ${$('newSite').value.trim()}`:'',
+        $('currentDesk').value?`Postazione attuale: ${$('currentDesk').value.trim()}`:'',
+        $('newDesk').value?`Nuova postazione: ${$('newDesk').value.trim()}`:'',
+        $('moveNotes').value?`Note: ${$('moveNotes').value.trim()}`:''
+      ].filter(Boolean).join('\n');
+
+      const trows=await insert('tickets',{
+        categoria:'Movimento persona',
+        oggetto:`${type} - ${name} ${surname}`,
+        descrizione:ticketDesc,
+        stato:'APERTO',
+        priorita:'NORMALE',
+        richiedente_nome:profile.nome,
+        richiedente_email:user.email,
+        created_by:user.id,
+        created_by_name:profile.nome,
+        origine:'HR',
+        sede:$('newSite').value.trim()||$('currentSite').value.trim()||null
+      });
+
+      const ticket=trows[0];
+      const ticketNo=`MOV-${new Date().getFullYear()}-${String(ticket.id).padStart(5,'0')}`;
+      await update('tickets',`id=eq.${ticket.id}`,{numero_ticket:ticketNo});
+
+      const mrows=await insert('hr_movements',{...payload,ticket_id:ticket.id},true);
+      const movement=mrows[0];
+
+      await insert('ticket_history',{
+        ticket_id:ticket.id,
+        evento:`Movimento HR creato: ${type}`,
+        autore:profile.nome
+      },false);
+
+      try{
+        await api('/functions/v1/telegram-new-ticket',{method:'POST',body:{ticket_id:ticket.id}});
+      }catch(e){console.warn('Telegram non inviato:',e.message)}
+
+      $('hrMoveForm').reset();
+      $('moveDate').value=new Date().toISOString().slice(0,10);
+      $('hrMoveResult').innerHTML=`Movimento registrato. Ticket <b>${ticketNo}</b>. Stato HR: <b>DA VERIFICARE</b>.`;
+      toast('Movimento HR creato');
+    }catch(err){
+      $('hrMoveResult').textContent=err.message;
+    }
+  };
+}
+
+async function hrHistory(){
+  if(!isHR()&&!isITRole())return userHome();
+  page('Storico movimenti','Ingressi, uscite e spostamenti registrati');
+
+  const rows=await select('hr_movements','select=*,tickets(numero_ticket,stato)&order=movement_date.desc,created_at.desc');
+  let q='',type='',site='',status='';
+
+  const sites=[...new Set(rows.flatMap(x=>[x.current_site,x.new_site]).filter(Boolean))].sort();
+
+  $('content').innerHTML=`
+    <div class="panel">
+      <div class="queue-toolbar advanced">
+        <input id="hrSearch" placeholder="Cerca persona, email, ticket...">
+        <select id="hrType"><option value="">Tutti i movimenti</option>
+          <option>NUOVO INGRESSO</option><option>USCITA</option><option>CAMBIO POSTAZIONE</option><option>CAMBIO SEDE</option>
+        </select>
+        <select id="hrSite"><option value="">Tutte le sedi</option>${sites.map(s=>`<option>${esc(s)}</option>`).join('')}</select>
+        <select id="hrStatus"><option value="">Tutti gli stati</option>
+          <option>DA VERIFICARE</option><option>VERIFICATO</option><option>ANNULLATO</option>
+        </select>
+      </div>
+      <div id="hrHistoryTable"></div>
+    </div>`;
+
+  const render=()=>{
+    const filtered=rows.filter(x=>{
+      if(type&&x.movement_type!==type)return false;
+      if(site&&x.current_site!==site&&x.new_site!==site)return false;
+      if(status&&x.status!==status)return false;
+      if(q){
+        const h=`${x.person_name||''} ${x.person_surname||''} ${x.person_email||''} ${x.tickets?.numero_ticket||''} ${x.current_site||''} ${x.new_site||''}`.toLowerCase();
+        if(!h.includes(q.toLowerCase()))return false;
+      }
+      return true;
+    });
+
+    $('hrHistoryTable').innerHTML=filtered.length?`
+      <div class="tablewrap"><table>
+        <thead><tr><th>Data</th><th>Tipo</th><th>Persona</th><th>Sede</th><th>Postazione</th><th>Ticket</th><th>Stato HR</th></tr></thead>
+        <tbody>${filtered.map(x=>`<tr>
+          <td>${dateOnly(x.movement_date)}</td>
+          <td><b>${esc(x.movement_type)}</b></td>
+          <td>${esc(`${x.person_name} ${x.person_surname}`)}<small class="subline">${esc(x.person_email||'')}</small></td>
+          <td>${esc(x.current_site||'—')} ${x.new_site?`→ ${esc(x.new_site)}`:''}</td>
+          <td>${esc(x.current_desk||'—')} ${x.new_desk?`→ ${esc(x.new_desk)}`:''}</td>
+          <td>${x.ticket_id?`<b class="ticket-link" data-open="${x.ticket_id}">${esc(x.tickets?.numero_ticket||'')}</b>`:'—'}</td>
+          <td>${isITRole()?`<select data-hr-status="${x.id}">
+            <option ${x.status==='DA VERIFICARE'?'selected':''}>DA VERIFICARE</option>
+            <option ${x.status==='VERIFICATO'?'selected':''}>VERIFICATO</option>
+            <option ${x.status==='ANNULLATO'?'selected':''}>ANNULLATO</option>
+          </select>`:`<span class="badge">${esc(x.status)}</span>`}</td>
+        </tr>`).join('')}</tbody>
+      </table></div>`:'<div class="empty">Nessun movimento.</div>';
+
+    document.querySelectorAll('[data-open]').forEach(x=>x.onclick=()=>detail(+x.dataset.open));
+    if(isITRole()){
+      document.querySelectorAll('[data-hr-status]').forEach(s=>s.onchange=async()=>{
+        await update('hr_movements',`id=eq.${s.dataset.hrStatus}`,{
+          status:s.value,
+          verified_by:s.value==='VERIFICATO'?currentITName():null,
+          verified_at:s.value==='VERIFICATO'?new Date().toISOString():null
+        });
+        toast('Stato HR aggiornato');
+      });
+    }
+  };
+
+  $('hrSearch').oninput=e=>{q=e.target.value;render()};
+  $('hrType').onchange=e=>{type=e.target.value;render()};
+  $('hrSite').onchange=e=>{site=e.target.value;render()};
+  $('hrStatus').onchange=e=>{status=e.target.value;render()};
+  render();
+}
+
+async function hrStats(){
+  if(!isHR()&&!isITRole())return userHome();
+  page('Statistiche HR','Movimenti registrati nel Service Desk');
+
+  const rows=await select('hr_movements','select=*&status=neq.ANNULLATO&order=movement_date.asc');
+
+  const totalIn=rows.filter(x=>x.movement_type==='NUOVO INGRESSO').length;
+  const totalOut=rows.filter(x=>x.movement_type==='USCITA').length;
+  const moves=rows.filter(x=>x.movement_type==='CAMBIO SEDE'||x.movement_type==='CAMBIO POSTAZIONE').length;
+  const pending=rows.filter(x=>x.status==='DA VERIFICARE').length;
+
+  const monthMap={};
+  rows.forEach(x=>{
+    const key=(x.movement_date||'').slice(0,7);
+    if(!key)return;
+    monthMap[key]??={in:0,out:0,move:0};
+    if(x.movement_type==='NUOVO INGRESSO')monthMap[key].in++;
+    else if(x.movement_type==='USCITA')monthMap[key].out++;
+    else monthMap[key].move++;
+  });
+
+  const siteMap={};
+  rows.forEach(x=>{
+    const s=x.new_site||x.current_site||'Non specificata';
+    siteMap[s]??={in:0,out:0,move:0};
+    if(x.movement_type==='NUOVO INGRESSO')siteMap[s].in++;
+    else if(x.movement_type==='USCITA')siteMap[s].out++;
+    else siteMap[s].move++;
+  });
+
+  $('content').innerHTML=`
+    <div class="metrics">
+      <div class="metric"><span>Ingressi</span><b>${totalIn}</b></div>
+      <div class="metric"><span>Uscite</span><b>${totalOut}</b></div>
+      <div class="metric"><span>Spostamenti</span><b>${moves}</b></div>
+      <div class="metric"><span>Da verificare</span><b>${pending}</b></div>
+    </div>
+
+    <div class="dashboard-grid">
+      <div class="panel">
+        <h3>Per mese</h3>
+        <div class="tablewrap"><table>
+          <thead><tr><th>Mese</th><th>Ingressi</th><th>Uscite</th><th>Spostamenti</th></tr></thead>
+          <tbody>${Object.entries(monthMap).sort((a,b)=>b[0].localeCompare(a[0])).map(([m,v])=>`<tr><td>${esc(m)}</td><td>${v.in}</td><td>${v.out}</td><td>${v.move}</td></tr>`).join('')}</tbody>
+        </table></div>
+      </div>
+      <div class="panel">
+        <h3>Per sede</h3>
+        <div class="tablewrap"><table>
+          <thead><tr><th>Sede</th><th>Ingressi</th><th>Uscite</th><th>Spostamenti</th></tr></thead>
+          <tbody>${Object.entries(siteMap).sort((a,b)=>a[0].localeCompare(b[0])).map(([s,v])=>`<tr><td>${esc(s)}</td><td>${v.in}</td><td>${v.out}</td><td>${v.move}</td></tr>`).join('')}</tbody>
+        </table></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="info-box">
+        Lo storico HR del portale parte dai movimenti registrati qui. Il collegamento diretto al file HR aziendale verrà aggiunto in uno step successivo con controlli anti-duplicazione.
+      </div>
+    </div>`;
 }
 
 function placeholder(k){
-  if(profile.ruolo!=='IT')return userHome();
+  if(!isITRole())return userHome();
   const m={
     movimenti:['Movimenti','Ingressi, uscite, cambio postazione e sede.'],
     censimento:['Censimento','Inventario asset e storico.']
@@ -665,230 +1020,185 @@ function placeholder(k){
 }
 
 async function detail(id){
-page('Dettaglio ticket','Conversazione e avanzamento');
-const rows=await select('tickets',`select=*&id=eq.${id}`);
-if(!rows.length)return;
-const t=rows[0];
-if(profile.ruolo!=='IT'&&t.richiedente_email!==user.email)return toast('Non autorizzato');
+  page('Dettaglio ticket','Conversazione e avanzamento');
+  const rows=await select('tickets',`select=*&id=eq.${id}`);
+  if(!rows.length)return;
+  const t=rows[0];
 
-let ap=[];
-try{ap=await select('appointments',`select=*&ticket_id=eq.${id}&order=start_at.desc`)}catch{}
-let materialBooking=null;
-if(t.categoria==='Prenotazione materiale'){
-  try{
-    const mb=await select('material_bookings',`select=*&ticket_id=eq.${id}`);
-    materialBooking=mb[0]||null;
-  }catch{}
-}
+  if(!isITRole()&&t.richiedente_email!==user.email)return toast('Non autorizzato');
 
-
-const apHtml = ap.length ? `<div class="appointment"><b>Appuntamento</b>${ap.map(a=>{
-  const st=a.status||'PROPOSTO';
-  const statusLabel=st==='CONFERMATO'?'Confermato':st==='RIFIUTATO'?'Da riprogrammare':'In attesa di conferma';
-  const action=(profile.ruolo!=='IT' && st==='PROPOSTO') ? `
-    <div class="appointment-actions">
-      <button class="primary ap-confirm" data-apid="${a.id}">Conferma</button>
-      <button class="ghost ap-decline" data-apid="${a.id}">Non posso</button>
-    </div>` : '';
-  return `<div class="appointment-row">
-    <div><strong>${fmt(a.start_at)} • ${esc(a.modalita)} • ${a.durata_minuti} min</strong></div>
-    ${a.note?`<div class="appointment-note">${esc(a.note)}</div>`:''}
-    <span class="appointment-status ${st.toLowerCase()}">${statusLabel}</span>
-    ${action}
-  </div>`;
-}).join('')}</div>` : '';
-
-$('content').innerHTML=`<div class="panel">
-  <span class="badge">${t.numero_ticket||num(t.id)}</span>
-  <h3>${esc(t.oggetto)}</h3>
-  <p>${esc(t.categoria)} • ${esc(t.richiedente_nome||t.richiedente_email)} • ${fmt(t.created_at)}</p>
-  ${badge(t.stato)}
-  <p>${esc(t.descrizione)}</p>
-  ${apHtml}
-  ${materialBooking?`<div class="appointment material-summary">
-    <b>Richiesta materiale</b>
-    <div class="booking-grid compact-grid">
-      <div><span>Materiale</span><b>${esc(materialBooking.material_type)} × ${materialBooking.quantity}</b></div>
-      <div><span>Stato</span>${bookingStatusBadge(materialBooking.status)}</div>
-      <div><span>Ritiro</span><b>${dateOnly(materialBooking.pickup_date)}</b></div>
-      <div><span>Restituzione</span><b>${dateOnly(materialBooking.planned_return_date)}</b></div>
-      ${materialBooking.asset_code?`<div><span>Asset assegnato</span><b>${esc(materialBooking.asset_code)}${materialBooking.asset_model?` — ${esc(materialBooking.asset_model)}`:''}</b></div>`:''}
-    </div>
-    ${profile.ruolo==='IT'?`<button id="manageMaterial" class="secondary compact">Gestisci materiale</button>`:''}
-  </div>`:''}
-</div>
-
-${profile.ruolo==='IT'?`<div class="panel">
-  <div class="it-management-head">
-    <div>
-      <h3>Gestione IT</h3>
-      <p class="muted-line">Assegna il ticket, definisci la priorità e aggiorna lo stato.</p>
-    </div>
-    ${!t.assegnato_a?'<button id="takeTicket" class="primary">Prendi in carico</button>':''}
-  </div>
-  <div class="formgrid">
-    <label>Stato<select id="st"><option>APERTO</option><option>IN LAVORAZIONE</option><option>IN ATTESA</option><option>CHIUSO</option></select></label>
-    <label>Priorità<select id="priority"><option>BASSA</option><option>NORMALE</option><option>ALTA</option><option>URGENTE</option></select></label>
-    <label class="full">Assegnato a<input id="ass"></label>
-  </div>
-  <button id="saveTicket" class="primary">Salva gestione</button>
-</div>
-<div class="panel">
-  <h3>Fissa appuntamento</h3>
-  <form id="apptForm" class="formgrid">
-    <label>Data e ora<input id="apptStart" type="datetime-local" required></label>
-    <label>Durata<select id="apptDur"><option>15</option><option selected>30</option><option>45</option><option>60</option></select></label>
-    <label>Modalità<select id="apptMode"><option>Presso IT</option><option>Alla postazione utente</option><option>Remoto</option><option>Sala / sede</option></select></label>
-    <label>Note<input id="apptNote"></label>
-    <div class="full"><button class="primary">Invia proposta appuntamento</button></div>
-  </form>
-</div>`:''}
-
-<div class="panel">
-  <h3>Commenti</h3>
-  <div id="comments"></div>
-  <form id="commentForm">
-    <label>Commento<textarea id="ct" rows="3" required></textarea></label>
-    ${profile.ruolo==='IT'?'<label><input id="internal" type="checkbox" style="width:auto"> Nota interna IT</label>':''}
-    <button class="primary">Invia commento</button>
-  </form>
-</div>
-
-${profile.ruolo==='IT'?`<div class="panel">
-  <h3>Checklist IT</h3>
-  <div id="checks"></div>
-  <form id="checkForm">
-    <label>Nuova attività<input id="checkText"></label>
-    <button class="secondary">Aggiungi</button>
-  </form>
-</div>`:''}`;
-
-if(profile.ruolo==='IT'){
-  if($('manageMaterial')&&materialBooking){
-    $('manageMaterial').onclick=()=>bookingDetail(materialBooking.id);
+  let ap=[],materialBooking=null,collabs=[];
+  try{ap=await select('appointments',`select=*&ticket_id=eq.${id}&order=start_at.desc`)}catch{}
+  if(t.categoria==='Prenotazione materiale'){
+    try{const mb=await select('material_bookings',`select=*&ticket_id=eq.${id}`);materialBooking=mb[0]||null}catch{}
   }
-  $('st').value=t.stato;
-  $('priority').value=t.priorita||'NORMALE';
-  $('ass').value=t.assegnato_a||'';
+  if(isITRole()){
+    try{collabs=await select('ticket_collaborators',`select=*,profiles(nome,email)&ticket_id=eq.${id}`)}catch{}
+  }
 
-  $('saveTicket').onclick=async()=>{
-    const stato=$('st').value;
-    await update('tickets',`id=eq.${id}`,{
-      stato,
-      assegnato_a:$('ass').value.trim()||null,
-      priorita:$('priority').value,
-      closed_at:stato==='CHIUSO'?new Date().toISOString():null
-    });
-    toast('Aggiornato');
-    detail(id);
-    refreshNotifications();
-  };
+  const its=isITRole()?await select('profiles','select=id,nome,email,ruolo&ruolo=in.(IT,SUPER_IT)&order=nome.asc'):[];
+  const apHtml=ap.length?`<div class="appointment"><b>Appuntamento</b>${ap.map(a=>`<div class="appointment-row"><strong>${fmt(a.start_at)} • ${esc(a.modalita)} • ${a.durata_minuti} min</strong><span class="appointment-status ${(a.status||'PROPOSTO').toLowerCase()}">${a.status||'PROPOSTO'}</span></div>`).join('')}</div>`:'';
 
-  if($('takeTicket')){
-    $('takeTicket').onclick=async()=>{
+  $('content').innerHTML=`
+    <div class="panel">
+      <span class="badge">${t.numero_ticket||num(t.id)}</span>
+      <h3>${esc(t.oggetto)}</h3>
+      <p>${esc(t.categoria)} • ${esc(t.richiedente_nome||t.richiedente_email)} • ${fmt(t.created_at)}</p>
+      <div class="ticket-meta-line">${badge(t.stato)} ${priorityBadge(t.priorita)} ${t.origine?`<span class="badge">${esc(t.origine)}</span>`:''}</div>
+      <p>${esc(t.descrizione)}</p>
+      ${t.created_by_name&&t.created_by_name!==t.richiedente_nome?`<div class="info-box">Creato da <b>${esc(t.created_by_name)}</b> per conto di <b>${esc(t.richiedente_email)}</b></div>`:''}
+      ${apHtml}
+      ${materialBooking?`<div class="appointment"><b>Richiesta materiale</b><div>${esc(materialBooking.material_type)} × ${materialBooking.quantity} • ${bookingStatusBadge(materialBooking.status)}</div>${isITRole()?`<button id="manageMaterial" class="secondary compact">Gestisci materiale</button>`:''}</div>`:''}
+    </div>
+
+    ${isITRole()?`<div class="panel">
+      <div class="it-management-head"><div><h3>Gestione IT</h3><p class="muted-line">Responsabile, collaboratori, priorità e stato.</p></div>${!t.assigned_to?'<button id="takeTicket" class="primary">Prendi in carico</button>':''}</div>
+      <div class="formgrid">
+        <label>Stato<select id="st"><option>APERTO</option><option>IN LAVORAZIONE</option><option>IN ATTESA</option><option>CHIUSO</option></select></label>
+        <label>Priorità<select id="priority"><option>BASSA</option><option>NORMALE</option><option>ALTA</option><option>URGENTE</option></select></label>
+        <label>Responsabile<select id="assigneeSelect"><option value="">NON ASSEGNATO</option>${its.map(i=>`<option value="${i.id}">${esc(i.nome||i.email)}</option>`).join('')}</select></label>
+        <label>Sede<input id="ticketSiteEdit" value="${esc(t.sede||'')}"></label>
+        <label>Esito chiusura<select id="outcome"><option value="">—</option><option>RISOLTO</option><option>RISOLTO CON WORKAROUND</option><option>NON RIPRODUCIBILE</option><option>RICHIESTA ANNULLATA</option><option>ALTRO</option></select></label>
+        <label class="full">Nota risoluzione <span class="optional">(facoltativa)</span><textarea id="resolutionNote" rows="2">${esc(t.resolution_note||'')}</textarea></label>
+      </div>
+
+      <div class="collaborators-box">
+        <b>Collaboratori IT</b>
+        <div id="collabList">${collabs.length?collabs.map(c=>`<span class="collab-chip">${esc(c.profiles?.nome||c.profiles?.email||'IT')} <button data-remove-collab="${c.user_id}">×</button></span>`).join(''):'<span class="muted-line">Nessuno</span>'}</div>
+        <div class="inline-controls"><select id="collabSelect"><option value="">Aggiungi collaboratore...</option>${its.filter(i=>i.id!==t.assigned_to&&!collabs.some(c=>c.user_id===i.id)).map(i=>`<option value="${i.id}">${esc(i.nome||i.email)}</option>`).join('')}</select><button id="addCollab" class="secondary">Aggiungi</button></div>
+      </div>
+
+      <div class="button-row"><button id="saveTicket" class="primary">Salva gestione</button>${t.stato==='CHIUSO'?'<button id="reopenTicket" class="secondary">Riapri ticket</button>':''}</div>
+    </div>
+
+    <div class="panel"><h3>Fissa appuntamento</h3>
+      <form id="apptForm" class="formgrid">
+        <label>Data e ora<input id="apptStart" type="datetime-local" required></label>
+        <label>Durata<select id="apptDur"><option>15</option><option selected>30</option><option>45</option><option>60</option></select></label>
+        <label>Modalità<select id="apptMode"><option>Presso IT</option><option>Alla postazione utente</option><option>Remoto</option><option>Sala / sede</option></select></label>
+        <label>Note<input id="apptNote"></label>
+        <div class="full"><button class="primary">Invia proposta appuntamento</button></div>
+      </form>
+    </div>`:''}
+
+    <div class="panel"><h3>Commenti</h3><div id="comments"></div>
+      <form id="commentForm"><label>Commento<textarea id="ct" rows="3" required></textarea></label>${isITRole()?'<label><input id="internal" type="checkbox" style="width:auto"> Nota interna IT</label>':''}<button class="primary">Invia commento</button></form>
+    </div>
+
+    ${isITRole()?`<div class="panel"><h3>Checklist IT</h3><div id="checks"></div><form id="checkForm"><label>Nuova attività<input id="checkText"></label><button class="secondary">Aggiungi</button></form></div>`:''}`;
+
+  if(isITRole()){
+    $('st').value=t.stato;
+    $('priority').value=t.priorita||'NORMALE';
+    $('assigneeSelect').value=t.assigned_to||'';
+    $('outcome').value=t.outcome||'';
+    if($('manageMaterial')&&materialBooking)$('manageMaterial').onclick=()=>bookingDetail(materialBooking.id);
+
+    if($('takeTicket'))$('takeTicket').onclick=async()=>{
+      await update('tickets',`id=eq.${id}`,{assigned_to:user.id,assegnato_a:currentITName(),stato:'IN LAVORAZIONE'});
+      await insert('ticket_history',{ticket_id:id,evento:`Preso in carico da ${currentITName()}`,autore:currentITName()},false);
+      toast('Ticket preso in carico');detail(id);
+    };
+
+    $('saveTicket').onclick=async()=>{
+      const newAssignee=$('assigneeSelect').value||null;
+      const assigneeProfile=its.find(i=>i.id===newAssignee);
+      const oldName=t.assegnato_a||'NON ASSEGNATO';
+      const newName=assigneeProfile?.nome||assigneeProfile?.email||null;
+
       await update('tickets',`id=eq.${id}`,{
-        stato:'IN LAVORAZIONE',
-        assegnato_a:profile.nome,
-        priorita:t.priorita||'NORMALE'
+        stato:$('st').value,
+        priorita:$('priority').value,
+        assigned_to:newAssignee,
+        assegnato_a:newName,
+        sede:$('ticketSiteEdit').value.trim()||null,
+        outcome:$('outcome').value||null,
+        resolution_note:$('resolutionNote').value.trim()||null,
+        closed_at:$('st').value==='CHIUSO'?new Date().toISOString():null
       });
-      toast('Ticket preso in carico');
+
+      if(oldName!==(newName||'NON ASSEGNATO')){
+        await insert('ticket_history',{ticket_id:id,evento:`Riassegnato: ${oldName} → ${newName||'NON ASSEGNATO'}`,autore:currentITName()},false);
+      }
+      toast('Ticket aggiornato');detail(id);refreshNotifications();
+    };
+
+    if($('reopenTicket'))$('reopenTicket').onclick=async()=>{
+      await update('tickets',`id=eq.${id}`,{stato:'IN LAVORAZIONE',closed_at:null,outcome:null});
+      await insert('ticket_history',{ticket_id:id,evento:'Ticket riaperto',autore:currentITName()},false);
+      toast('Ticket riaperto');detail(id);
+    };
+
+    $('addCollab').onclick=async()=>{
+      const uid=$('collabSelect').value;
+      if(!uid)return;
+      await insert('ticket_collaborators',{ticket_id:id,user_id:uid,added_by:user.id},false);
+      await insert('ticket_history',{ticket_id:id,evento:'Collaboratore IT aggiunto',autore:currentITName()},false);
       detail(id);
-      refreshNotifications();
+    };
+    document.querySelectorAll('[data-remove-collab]').forEach(b=>b.onclick=async()=>{
+      await api(`/rest/v1/ticket_collaborators?ticket_id=eq.${id}&user_id=eq.${b.dataset.removeCollab}`,{method:'DELETE',headers:{Prefer:'return=minimal'}});
+      detail(id);
+    });
+
+    $('apptForm').onsubmit=async e=>{
+      e.preventDefault();
+      await insert('appointments',{ticket_id:id,start_at:new Date($('apptStart').value).toISOString(),durata_minuti:+$('apptDur').value,modalita:$('apptMode').value,note:$('apptNote').value.trim()||null,created_by:user.id,status:'PROPOSTO'},false);
+      await update('tickets',`id=eq.${id}`,{stato:'IN ATTESA'});
+      toast('Proposta appuntamento inviata');detail(id);
     };
   }
 
-  $('apptForm').onsubmit=async e=>{
-    e.preventDefault();
-    const start=$('apptStart').value;
-    await insert('appointments',{
-      ticket_id:id,
-      start_at:new Date(start).toISOString(),
-      durata_minuti:+$('apptDur').value,
-      modalita:$('apptMode').value,
-      note:$('apptNote').value.trim()||null,
-      created_by:user.id,
-      status:'PROPOSTO'
-    },false);
-    await update('tickets',`id=eq.${id}`,{stato:'IN ATTESA'});
-    toast('Proposta appuntamento inviata');
-    detail(id);
-    refreshNotifications();
-  };
-}
+  document.querySelectorAll('.ap-confirm').forEach(b=>b.onclick=async()=>{await update('appointments',`id=eq.${+b.dataset.apid}`,{status:'CONFERMATO',confirmed_at:new Date().toISOString(),confirmed_by:user.id});toast('Appuntamento confermato');detail(id)});
+  document.querySelectorAll('.ap-decline').forEach(b=>b.onclick=async()=>{await update('appointments',`id=eq.${+b.dataset.apid}`,{status:'RIFIUTATO',confirmed_at:new Date().toISOString(),confirmed_by:user.id});toast('Appuntamento da riprogrammare');detail(id)});
 
-// USER: conferma / rifiuta proposta appuntamento
-document.querySelectorAll('.ap-confirm').forEach(b=>b.onclick=async()=>{
-  await update('appointments',`id=eq.${+b.dataset.apid}`,{
-    status:'CONFERMATO',
-    confirmed_at:new Date().toISOString(),
-    confirmed_by:user.id
-  });
-  toast('Appuntamento confermato');
-  detail(id);
-  refreshNotifications();
-});
-document.querySelectorAll('.ap-decline').forEach(b=>b.onclick=async()=>{
-  await update('appointments',`id=eq.${+b.dataset.apid}`,{
-    status:'RIFIUTATO',
-    confirmed_at:new Date().toISOString(),
-    confirmed_by:user.id
-  });
-  toast('Segnalato: appuntamento da riprogrammare');
-  detail(id);
-  refreshNotifications();
-});
-
-async function comments(){
-  const d=await select('comments',`select=*&ticket_id=eq.${id}&order=created_at.asc`);
-  const v=profile.ruolo==='IT'?d:d.filter(x=>!x.nota_interna);
-  $('comments').innerHTML=v.length?v.map(x=>`<div class="comment ${x.nota_interna?'internal':''}">
-    <b>${esc(x.autore)}${x.nota_interna?' • Nota interna':''}</b>
-    <small style="float:right">${fmt(x.created_at)}</small>
-    <p>${esc(x.testo)}</p>
-  </div>`).join(''):'<p>Nessun commento.</p>';
-}
-$('commentForm').onsubmit=async e=>{
-  e.preventDefault();
-  const txt=$('ct').value.trim();
-  const internal=profile.ruolo==='IT'&&$('internal').checked;
-  await insert('comments',{
-    ticket_id:id,
-    autore:profile.nome,
-    autore_email:user.email,
-    testo:txt,
-    nota_interna:internal
-  },false);
-  $('ct').value='';
-  comments();
-  refreshNotifications();
-};
-
-if(profile.ruolo==='IT'){
-  async function checks(){
-    const d=await select('checklist_items',`select=*&ticket_id=eq.${id}&order=id.asc`);
-    $('checks').innerHTML=d.length?d.map(x=>`<label class="check">
-      <input type="checkbox" data-c="${x.id}" ${x.completato?'checked':''}>
-      <span>${esc(x.testo)}</span>
-    </label>`).join(''):'<p>Nessuna attività.</p>';
-    document.querySelectorAll('[data-c]').forEach(c=>c.onchange=()=>update('checklist_items',`id=eq.${+c.dataset.c}`,{
-      completato:c.checked,
-      completed_at:c.checked?new Date().toISOString():null,
-      completed_by:c.checked?profile.nome:null
-    }));
+  async function comments(){
+    const d=await select('comments',`select=*&ticket_id=eq.${id}&order=created_at.asc`);
+    const v=isITRole()?d:d.filter(x=>!x.nota_interna);
+    $('comments').innerHTML=v.length?v.map(x=>`<div class="comment ${x.nota_interna?'internal':''}"><b>${esc(x.autore)}${x.nota_interna?' • Nota interna':''}</b><small style="float:right">${fmt(x.created_at)}</small><p>${esc(x.testo)}</p></div>`).join(''):'<p>Nessun commento.</p>';
   }
-  $('checkForm').onsubmit=async e=>{
+  $('commentForm').onsubmit=async e=>{
     e.preventDefault();
-    if(!$('checkText').value.trim())return;
-    await insert('checklist_items',{ticket_id:id,testo:$('checkText').value.trim()},false);
-    $('checkText').value='';
-    checks();
+    await insert('comments',{ticket_id:id,autore:profile.nome,autore_email:user.email,testo:$('ct').value.trim(),nota_interna:isITRole()&&$('internal').checked},false);
+    $('ct').value='';comments();refreshNotifications();
   };
-  checks();
+
+  if(isITRole()){
+    async function checks(){
+      const d=await select('checklist_items',`select=*&ticket_id=eq.${id}&order=id.asc`);
+      $('checks').innerHTML=d.length?d.map(x=>`<label class="check"><input type="checkbox" data-c="${x.id}" ${x.completato?'checked':''}><span>${esc(x.testo)}</span><small>${x.completato?`${esc(x.completed_by||'')} • ${fmt(x.completed_at)}`:''}</small></label>`).join(''):'<p>Nessuna attività.</p>';
+      document.querySelectorAll('[data-c]').forEach(c=>c.onchange=()=>update('checklist_items',`id=eq.${+c.dataset.c}`,{completato:c.checked,completed_at:c.checked?new Date().toISOString():null,completed_by:c.checked?profile.nome:null}));
+    }
+    $('checkForm').onsubmit=async e=>{e.preventDefault();if(!$('checkText').value.trim())return;await insert('checklist_items',{ticket_id:id,testo:$('checkText').value.trim()},false);$('checkText').value='';checks()};
+    checks();
+  }
+  comments();
 }
-comments();
+function nav(v){
+  const normalUserViews=['new','mine'];
+  const hrViews=['hr-new','hr-history','hr-stats'];
+
+  if(isHR()){
+    if(!normalUserViews.includes(v)&&!hrViews.includes(v))return userHome();
+  }else if(!isITRole()&&!normalUserViews.includes(v)){
+    return userHome();
+  }
+
+  if(v==='home')home();
+  else if(v==='new')newTicket();
+  else if(v==='mine')mine();
+  else if(v==='it')it();
+  else if(v==='calendar')calendar();
+  else if(v==='prenotazioni')bookings();
+  else if(v==='movimenti')hrHistory();
+  else if(v==='hr-new')hrNewMovement();
+  else if(v==='hr-history')hrHistory();
+  else if(v==='hr-stats')hrStats();
+  else placeholder(v);
 }
-function nav(v){if(profile?.ruolo!=='IT'&&!['new','mine'].includes(v))return userHome();if(v==='home')home();else if(v==='new')newTicket();else if(v==='mine')mine();else if(v==='it')it();else if(v==='calendar')calendar();else if(v==='prenotazioni')bookings();else placeholder(v)}
-async function boot(){const raw=localStorage.getItem('archea_sd_session');if(raw){try{session=JSON.parse(raw);user=await api('/auth/v1/user')}catch{clear()}}if(!user){$('login').classList.remove('hidden');$('app').classList.add('hidden');return}const p=await select('profiles',`select=*&id=eq.${user.id}`);if(!p.length){clear();$('loginErr').textContent='Profilo non trovato';return}profile=p[0];$('who').textContent=profile.nome||user.email;$('role').textContent=profile.ruolo;$('userNav').classList.toggle('hidden',profile.ruolo==='IT');$('itNav').classList.toggle('hidden',profile.ruolo!=='IT');$('login').classList.add('hidden');$('app').classList.remove('hidden');profile.ruolo==='IT'?home():userHome();
+async function boot(){const raw=localStorage.getItem('archea_sd_session');if(raw){try{session=JSON.parse(raw);user=await api('/auth/v1/user')}catch{clear()}}if(!user){$('login').classList.remove('hidden');$('app').classList.add('hidden');return}const p=await select('profiles',`select=*&id=eq.${user.id}`);if(!p.length){clear();$('loginErr').textContent='Profilo non trovato';return}profile=p[0];$('who').textContent=profile.nome||user.email;$('role').textContent=profile.ruolo;$('userNav').classList.toggle('hidden',isITRole()||isHR());
+$('hrNav').classList.toggle('hidden',!isHR());
+$('itNav').classList.toggle('hidden',!isITRole());$('login').classList.add('hidden');$('app').classList.remove('hidden');isITRole()?home():userHome();
 refreshNotifications();
 setInterval(refreshNotifications,30000);
 setInterval(async()=>{
