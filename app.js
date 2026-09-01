@@ -7,6 +7,11 @@ const esc=s=>(s||'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','
 const fmt=d=>d?new Intl.DateTimeFormat('it-IT',{dateStyle:'short',timeStyle:'short'}).format(new Date(d)):'—';
 const num=id=>`TKT-${new Date().getFullYear()}-${String(id).padStart(5,'0')}`;
 const badge=s=>`<span class="badge ${s==='APERTO'?'open':s==='IN LAVORAZIONE'?'working':s==='CHIUSO'?'closed':''}">${esc(s)}</span>`;
+const priorityBadge=p=>{
+  p=p||'NORMALE';
+  const c=p==='URGENTE'?'prio-urgent':p==='ALTA'?'prio-high':p==='BASSA'?'prio-low':'prio-normal';
+  return `<span class="badge ${c}">${esc(p)}</span>`;
+};
 function toast(t){$('toast').textContent=t;$('toast').classList.remove('hidden');setTimeout(()=>$('toast').classList.add('hidden'),2200)}
 function page(t,s=''){$('title').textContent=t;$('subtitle').textContent=s}
 function save(s){session=s;localStorage.setItem('archea_sd_session',JSON.stringify(s))}
@@ -30,13 +35,41 @@ async function refreshNotifications(){
 $('bellBtn').onclick=()=>{$('notificationPanel').classList.toggle('hidden');if(!$('notificationPanel').classList.contains('hidden'))refreshNotifications()}
 $('markAllRead').onclick=async()=>{await update('notifications',`user_id=eq.${user.id}&is_read=eq.false`,{is_read:true});refreshNotifications()}
 
-function table(rows,it=false){if(!rows.length)return'<p>Nessun ticket.</p>';return`<div class="tablewrap"><table><thead><tr><th>Ticket</th>${it?'<th>Richiedente</th>':''}<th>Categoria</th><th>Oggetto</th><th>Stato</th><th>Data</th></tr></thead><tbody>${rows.map(x=>`<tr class="click" data-id="${x.id}"><td><b>${x.numero_ticket||num(x.id)}</b></td>${it?`<td>${esc(x.richiedente_nome||x.richiedente_email)}</td>`:''}<td>${esc(x.categoria)}</td><td>${esc(x.oggetto)}</td><td>${badge(x.stato)}</td><td>${fmt(x.created_at)}</td></tr>`).join('')}</tbody></table></div>`}
+function table(rows,it=false){
+  if(!rows.length)return'<p>Nessun ticket.</p>';
+  return `<div class="tablewrap"><table>
+    <thead><tr>
+      <th>Ticket</th>
+      ${it?'<th>Assegnato a</th><th>Priorità</th>':''}
+      ${it?'<th>Richiedente</th>':''}
+      <th>Categoria</th>
+      <th>Oggetto</th>
+      <th>Stato</th>
+      <th>Data apertura</th>
+    </tr></thead>
+    <tbody>${rows.map(x=>`<tr class="click" data-id="${x.id}">
+      <td><b>${x.numero_ticket||num(x.id)}</b></td>
+      ${it?`<td>${x.assegnato_a?`<span class="assignee">${esc(x.assegnato_a)}</span>`:'<span class="unassigned">NON ASSEGNATO</span>'}</td>
+      <td>${priorityBadge(x.priorita)}</td>`:''}
+      ${it?`<td>${esc(x.richiedente_nome||x.richiedente_email)}</td>`:''}
+      <td>${esc(x.categoria)}</td>
+      <td>${esc(x.oggetto)}</td>
+      <td>${badge(x.stato)}</td>
+      <td>${fmt(x.created_at)}</td>
+    </tr>`).join('')}</tbody>
+  </table></div>`;
+}
 function wire(){document.querySelectorAll('[data-id]').forEach(r=>r.onclick=()=>detail(+r.dataset.id))}
 
 async function userHome(){page('Service Desk','Apri una richiesta o controlla i tuoi ticket');const d=await select('tickets',`select=*&richiedente_email=eq.${encodeURIComponent(user.email)}&order=created_at.desc&limit=5`);$('content').innerHTML=`<div class="userhero"><h3>Come possiamo aiutarti?</h3><p>Puoi aprire ticket e vedere solo le tue richieste.</p><button id="openNow" class="primary">Apri un ticket</button></div><div class="panel"><h3>Le tue richieste recenti</h3>${table(d)}</div>`;$('openNow').onclick=()=>nav('new');wire()}
-async function home(){if(profile.ruolo!=='IT')return userHome();page('Dashboard','Panoramica del Service Desk');const d=await select('tickets','select=*&order=created_at.desc');$('content').innerHTML=`<div class="metrics"><div class="metric"><span>Aperti</span><b>${d.filter(x=>x.stato==='APERTO').length}</b></div><div class="metric"><span>In lavorazione</span><b>${d.filter(x=>x.stato==='IN LAVORAZIONE').length}</b></div><div class="metric"><span>Chiusi</span><b>${d.filter(x=>x.stato==='CHIUSO').length}</b></div><div class="metric"><span>Totale</span><b>${d.length}</b></div></div><div class="panel"><h3>Ticket recenti</h3>${table(d.slice(0,8),true)}</div>`;wire()}
+async function home(){if(profile.ruolo!=='IT')return userHome();page('Dashboard','Panoramica del Service Desk');const d=await select('tickets','select=*&order=created_at.desc');$('content').innerHTML=`<div class="metrics"><div class="metric"><span>Da prendere in carico</span><b>${d.filter(x=>!x.assegnato_a && x.stato!=='CHIUSO').length}</b></div><div class="metric"><span>In lavorazione</span><b>${d.filter(x=>x.stato==='IN LAVORAZIONE').length}</b></div><div class="metric"><span>Urgenti</span><b>${d.filter(x=>x.priorita==='URGENTE' && x.stato!=='CHIUSO').length}</b></div><div class="metric"><span>Aperti totali</span><b>${d.filter(x=>x.stato!=='CHIUSO').length}</b></div></div><div class="panel"><h3>Ticket recenti</h3>${table(d.slice(0,8),true)}</div>`;wire()}
 function newTicket(){page('Nuovo ticket','Apri una richiesta al team IT');$('content').innerHTML=`<div class="panel"><form id="ticketForm" class="formgrid"><label>Categoria<select id="cat" required><option value="">Seleziona...</option><option>Supporto IT</option><option>Installazioni</option><option>Manutenzioni</option><option>Hardware</option><option>Accessi</option><option>Rete / Wi-Fi</option><option>Movimento persona</option><option>Prenotazione materiale</option><option>Altro</option></select></label><label>Oggetto<input id="sub" required></label><label class="full">Descrizione<textarea id="desc" rows="8" required></textarea></label><div class="full"><button class="primary">Invia ticket</button></div></form><p id="result"></p></div>`;
-$('ticketForm').onsubmit=async e=>{e.preventDefault();try{const rows=await insert('tickets',{categoria:$('cat').value,oggetto:$('sub').value.trim(),descrizione:$('desc').value.trim(),stato:'APERTO',richiedente_nome:profile.nome,richiedente_email:user.email});const d=rows[0],n=num(d.id);await update('tickets',`id=eq.${d.id}`,{numero_ticket:n});await insert('ticket_history',{ticket_id:d.id,evento:'Ticket creato',autore:profile.nome},false);e.target.reset();$('result').textContent=`Ticket ${n} creato.`;toast('Ticket creato');refreshNotifications()}catch(err){$('result').textContent=err.message}}}
+$('ticketForm').onsubmit=async e=>{e.preventDefault();try{const rows=await insert('tickets',{categoria:$('cat').value,oggetto:$('sub').value.trim(),descrizione:$('desc').value.trim(),stato:'APERTO',priorita:'NORMALE',richiedente_nome:profile.nome,richiedente_email:user.email});const d=rows[0],n=num(d.id);await update('tickets',`id=eq.${d.id}`,{numero_ticket:n});try{
+  await api('/functions/v1/telegram-new-ticket',{
+    method:'POST',
+    body:{ticket_id:d.id}
+  });
+}catch(e){console.warn('Telegram non inviato:',e.message)}await insert('ticket_history',{ticket_id:d.id,evento:'Ticket creato',autore:profile.nome},false);e.target.reset();$('result').textContent=`Ticket ${n} creato.`;toast('Ticket creato');refreshNotifications()}catch(err){$('result').textContent=err.message}}}
 async function mine(){page('I miei ticket','Storico delle tue richieste');const d=await select('tickets',`select=*&richiedente_email=eq.${encodeURIComponent(user.email)}&order=created_at.desc`);$('content').innerHTML=`<div class="panel">${table(d)}</div>`;wire()}
 async function it(){if(profile.ruolo!=='IT')return userHome();page('Gestione IT','Tutti i ticket');const d=await select('tickets','select=*&order=created_at.desc');$('content').innerHTML=`<div class="panel">${table(d,true)}</div>`;wire()}
 async function calendar(){if(profile.ruolo!=='IT')return userHome();page('Calendario','Appuntamenti collegati ai ticket');const d=await select('appointments','select=*,tickets(numero_ticket,oggetto,richiedente_nome)&order=start_at.asc');$('content').innerHTML=`<div class="panel"><h3>Appuntamenti</h3>${d.length?d.map(a=>`<div class="appointment"><b>${fmt(a.start_at)} • ${esc(a.modalita)}</b><div>${esc(a.tickets?.numero_ticket||'')} — ${esc(a.tickets?.oggetto||'')}</div><small>${esc(a.tickets?.richiedente_nome||'')} • ${a.durata_minuti} min</small></div>`).join(''):'<p>Nessun appuntamento.</p>'}</div>`}
@@ -78,10 +111,19 @@ $('content').innerHTML=`<div class="panel">
 </div>
 
 ${profile.ruolo==='IT'?`<div class="panel">
-  <h3>Gestione IT</h3>
-  <label>Stato<select id="st"><option>APERTO</option><option>IN LAVORAZIONE</option><option>IN ATTESA</option><option>CHIUSO</option></select></label>
-  <label>Assegnato a<input id="ass"></label>
-  <button id="saveTicket" class="primary">Salva</button>
+  <div class="it-management-head">
+    <div>
+      <h3>Gestione IT</h3>
+      <p class="muted-line">Assegna il ticket, definisci la priorità e aggiorna lo stato.</p>
+    </div>
+    ${!t.assegnato_a?'<button id="takeTicket" class="primary">Prendi in carico</button>':''}
+  </div>
+  <div class="formgrid">
+    <label>Stato<select id="st"><option>APERTO</option><option>IN LAVORAZIONE</option><option>IN ATTESA</option><option>CHIUSO</option></select></label>
+    <label>Priorità<select id="priority"><option>BASSA</option><option>NORMALE</option><option>ALTA</option><option>URGENTE</option></select></label>
+    <label class="full">Assegnato a<input id="ass"></label>
+  </div>
+  <button id="saveTicket" class="primary">Salva gestione</button>
 </div>
 <div class="panel">
   <h3>Fissa appuntamento</h3>
@@ -115,6 +157,7 @@ ${profile.ruolo==='IT'?`<div class="panel">
 
 if(profile.ruolo==='IT'){
   $('st').value=t.stato;
+  $('priority').value=t.priorita||'NORMALE';
   $('ass').value=t.assegnato_a||'';
 
   $('saveTicket').onclick=async()=>{
@@ -122,12 +165,26 @@ if(profile.ruolo==='IT'){
     await update('tickets',`id=eq.${id}`,{
       stato,
       assegnato_a:$('ass').value.trim()||null,
+      priorita:$('priority').value,
       closed_at:stato==='CHIUSO'?new Date().toISOString():null
     });
     toast('Aggiornato');
     detail(id);
     refreshNotifications();
   };
+
+  if($('takeTicket')){
+    $('takeTicket').onclick=async()=>{
+      await update('tickets',`id=eq.${id}`,{
+        stato:'IN LAVORAZIONE',
+        assegnato_a:profile.nome,
+        priorita:t.priorita||'NORMALE'
+      });
+      toast('Ticket preso in carico');
+      detail(id);
+      refreshNotifications();
+    };
+  }
 
   $('apptForm').onsubmit=async e=>{
     e.preventDefault();
