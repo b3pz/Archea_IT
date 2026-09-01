@@ -172,6 +172,31 @@ function currentITName(){return profile?.nome||user?.email||'IT'}
 function isITRole(){return profile?.ruolo==='IT'||profile?.ruolo==='SUPER_IT'}
 function isSuperIT(){return profile?.ruolo==='SUPER_IT'}
 function isHR(){return profile?.ruolo==='HR'}
+function assetStatusBadge(s){
+  const cls={
+    'DISPONIBILE':'asset-available',
+    'ASSEGNATO':'asset-assigned',
+    'PRENOTATO':'asset-booked',
+    'IN PRESTITO':'asset-loan',
+    'IN MANUTENZIONE':'asset-maint',
+    'GUASTO':'asset-broken',
+    'DISMESSO':'asset-retired',
+    'VENDUTO':'asset-sold',
+    'DA VERIFICARE':'asset-check'
+  }[s]||'asset-check';
+  return `<span class="badge ${cls}">${esc(s||'DA VERIFICARE')}</span>`;
+}
+function verifyBadge(s){
+  const cls={
+    'VERIFICATO':'verify-ok',
+    'DA VERIFICARE':'verify-warn',
+    'DUBBIO':'verify-doubt',
+    'NON TROVATO':'verify-missing',
+    'ASSEGNAZIONE DA CONFERMARE':'verify-warn'
+  }[s]||'verify-warn';
+  return `<span class="badge ${cls}">${esc(s||'DA VERIFICARE')}</span>`;
+}
+
 function relTime(d){
   if(!d)return '—';
   const s=Math.max(0,Math.floor((Date.now()-new Date(d).getTime())/1000));
@@ -582,6 +607,9 @@ async function bookingDetail(id){
   if(!rows.length)return;
   const b=rows[0];
 
+  const assets=await select('assets','select=id,asset_code,category,brand,model,serial_number,status,site,verification_status&status=in.(DISPONIBILE,PRENOTATO,IN PRESTITO,DA VERIFICARE)&order=asset_code.asc');
+  const currentAsset=b.asset_id?assets.find(a=>a.id===b.asset_id):null;
+
   page('Prenotazione materiale',b.tickets?.numero_ticket||'');
 
   $('content').innerHTML=`
@@ -606,9 +634,15 @@ async function bookingDetail(id){
         <label>Stato prenotazione<select id="bookStatus">
           <option>RICHIESTA</option><option>DA VERIFICARE</option><option>CONFERMATA</option><option>PRONTA</option><option>CONSEGNATA</option><option>RESTITUITA</option>
         </select></label>
-        <label>Codice asset<input id="assetCode" value="${esc(b.asset_code||'')}"></label>
-        <label>Descrizione / modello<input id="assetModel" value="${esc(b.asset_model||'')}"></label>
-        <label>Seriale<input id="assetSerial" value="${esc(b.asset_serial||'')}"></label>
+
+        <label>Asset dal censimento<select id="bookingAsset">
+          <option value="">Seleziona asset...</option>
+          ${assets.map(a=>`<option value="${a.id}">${esc(a.asset_code)} — ${esc([a.brand,a.model].filter(Boolean).join(' ')||a.category||'')} — ${esc(a.status)}</option>`).join('')}
+        </select></label>
+
+        <label>Codice asset<input id="assetCode" value="${esc(b.asset_code||'')}" readonly></label>
+        <label>Descrizione / modello<input id="assetModel" value="${esc(b.asset_model||'')}" readonly></label>
+        <label>Seriale<input id="assetSerial" value="${esc(b.asset_serial||'')}" readonly></label>
         <label class="full">Accessori consegnati<input id="deliveredAccessories" value="${esc(b.delivered_accessories||'')}"></label>
         <label>Data restituzione effettiva<input id="actualReturn" type="date" value="${b.actual_return_date||''}"></label>
         <label>Stato al rientro<select id="returnCondition">
@@ -621,37 +655,115 @@ async function bookingDetail(id){
         <button id="saveBooking" class="primary">Salva prenotazione</button>
         <button id="printDelivery" class="secondary">Genera verbale / PDF</button>
       </div>
-      <p class="muted-line">Il documento viene generato al momento e non viene archiviato nel database.</p>
+      <p class="muted-line">L'asset viene scelto dal censimento e il suo stato viene aggiornato automaticamente in base alla prenotazione.</p>
     </div>`;
 
   $('bookStatus').value=b.status||'RICHIESTA';
   $('returnCondition').value=b.return_condition||'';
+  $('bookingAsset').value=b.asset_id||'';
   $('openBookingTicket').onclick=()=>detail(b.ticket_id);
 
+  $('bookingAsset').onchange=()=>{
+    const a=assets.find(x=>String(x.id)===$('bookingAsset').value);
+    $('assetCode').value=a?.asset_code||'';
+    $('assetModel').value=[a?.brand,a?.model].filter(Boolean).join(' ')||a?.category||'';
+    $('assetSerial').value=a?.serial_number||'';
+  };
+
+  const syncAssetStatus=async(oldAssetId,newAssetId,newBookingStatus,returnCondition)=>{
+    // Libera il vecchio asset se viene cambiato.
+    if(oldAssetId&&String(oldAssetId)!==String(newAssetId||'')){
+      const oldRows=await select('assets',`select=*&id=eq.${oldAssetId}`);
+      if(oldRows[0]){
+        await update('assets',`id=eq.${oldAssetId}`,{
+          status:'DISPONIBILE',
+          assigned_user_name:null,
+          assigned_user_email:null,
+          updated_at:new Date().toISOString()
+        });
+        await insert('asset_history',{
+          asset_id:oldAssetId,event_type:'PRENOTAZIONE',
+          field_name:'status',old_value:oldRows[0].status,new_value:'DISPONIBILE',
+          changed_by:currentITName(),changed_by_id:user.id
+        },false);
+      }
+    }
+
+    if(!newAssetId)return;
+    const ar=await select('assets',`select=*&id=eq.${newAssetId}`);
+    const a=ar[0];
+    if(!a)return;
+
+    let next=a.status;
+    let assigneeName=a.assigned_user_name;
+    let assigneeEmail=a.assigned_user_email;
+
+    if(['CONFERMATA','PRONTA'].includes(newBookingStatus))next='PRENOTATO';
+    else if(newBookingStatus==='CONSEGNATA'){
+      next='IN PRESTITO';
+      assigneeName=b.requester_name||b.requester_email;
+      assigneeEmail=b.requester_email;
+    }else if(newBookingStatus==='RESTITUITA'){
+      next=returnCondition==='DANNEGGIATO'?'GUASTO':returnCondition==='OK'?'DISPONIBILE':'DA VERIFICARE';
+      if(next==='DISPONIBILE'){
+        assigneeName=null; assigneeEmail=null;
+      }
+    }
+
+    if(next!==a.status || assigneeEmail!==a.assigned_user_email){
+      await update('assets',`id=eq.${newAssetId}`,{
+        status:next,
+        assigned_user_name:assigneeName,
+        assigned_user_email:assigneeEmail,
+        verification_status:newBookingStatus==='RESTITUITA'&&returnCondition!=='OK'?'DA VERIFICARE':a.verification_status,
+        updated_at:new Date().toISOString()
+      });
+      await insert('asset_history',{
+        asset_id:newAssetId,event_type:'PRENOTAZIONE',
+        field_name:'status',old_value:a.status,new_value:next,
+        changed_by:currentITName(),changed_by_id:user.id
+      },false);
+    }
+  };
+
   $('saveBooking').onclick=async()=>{
+    const newAssetId=$('bookingAsset').value?+$('bookingAsset').value:null;
+    const selected=assets.find(x=>x.id===newAssetId);
+    const newStatus=$('bookStatus').value;
+    const retCond=$('returnCondition').value||null;
+
+    if(['CONFERMATA','PRONTA','CONSEGNATA'].includes(newStatus)&&!newAssetId){
+      return toast('Seleziona prima un asset dal censimento');
+    }
+
     await update('material_bookings',`id=eq.${id}`,{
-      status:$('bookStatus').value,
-      asset_code:$('assetCode').value.trim()||null,
-      asset_model:$('assetModel').value.trim()||null,
-      asset_serial:$('assetSerial').value.trim()||null,
+      status:newStatus,
+      asset_id:newAssetId,
+      asset_code:selected?.asset_code||null,
+      asset_model:selected?([selected.brand,selected.model].filter(Boolean).join(' ')||selected.category||null):null,
+      asset_serial:selected?.serial_number||null,
       delivered_accessories:$('deliveredAccessories').value.trim()||null,
       actual_return_date:$('actualReturn').value||null,
-      return_condition:$('returnCondition').value||null,
+      return_condition:retCond,
       return_notes:$('returnNotes').value.trim()||null,
       it_notes:$('bookItNotes').value.trim()||null,
       prepared_by:currentITName(),
       updated_at:new Date().toISOString()
     });
+
+    await syncAssetStatus(b.asset_id,newAssetId,newStatus,retCond);
     toast('Prenotazione aggiornata');
     bookingDetail(id);
   };
 
   $('printDelivery').onclick=()=>{
+    const selected=assets.find(x=>String(x.id)===$('bookingAsset').value);
     const live={...b,
       status:$('bookStatus').value,
-      asset_code:$('assetCode').value.trim(),
-      asset_model:$('assetModel').value.trim(),
-      asset_serial:$('assetSerial').value.trim(),
+      asset_id:selected?.id||null,
+      asset_code:selected?.asset_code||$('assetCode').value.trim(),
+      asset_model:selected?([selected.brand,selected.model].filter(Boolean).join(' ')||selected.category):$('assetModel').value.trim(),
+      asset_serial:selected?.serial_number||$('assetSerial').value.trim(),
       delivered_accessories:$('deliveredAccessories').value.trim(),
       actual_return_date:$('actualReturn').value,
       return_condition:$('returnCondition').value,
@@ -659,7 +771,7 @@ async function bookingDetail(id){
       it_notes:$('bookItNotes').value.trim(),
       prepared_by:currentITName()
     };
-    if(!live.asset_code)return toast('Inserisci prima il codice asset');
+    if(!live.asset_code)return toast('Seleziona prima un asset');
     printDeliverySheet(live);
   };
 }
@@ -1009,6 +1121,354 @@ async function hrStats(){
     </div>`;
 }
 
+
+async function census(){
+  if(!isITRole())return userHome();
+  page('Censimento','Inventario IT, verifica asset e storico');
+
+  const rows=await select('assets','select=*&order=asset_code.asc');
+  let q='',site='',status='',verification='';
+
+  const sites=[...new Set(rows.map(x=>x.site).filter(Boolean))].sort();
+
+  $('content').innerHTML=`
+    <div class="metrics">
+      <div class="metric"><span>Asset totali</span><b>${rows.length}</b></div>
+      <div class="metric"><span>Verificati</span><b>${rows.filter(x=>x.verification_status==='VERIFICATO').length}</b></div>
+      <div class="metric"><span>Da verificare</span><b>${rows.filter(x=>x.verification_status!=='VERIFICATO').length}</b></div>
+      <div class="metric"><span>Disponibili</span><b>${rows.filter(x=>x.status==='DISPONIBILE').length}</b></div>
+    </div>
+
+    <div class="panel">
+      <div class="asset-toolbar">
+        <input id="assetSearch" placeholder="Cerca codice, seriale, modello, utente...">
+        <select id="assetSite"><option value="">Tutte le sedi</option>${sites.map(s=>`<option>${esc(s)}</option>`).join('')}</select>
+        <select id="assetStatus">
+          <option value="">Tutti gli stati</option>
+          <option>DISPONIBILE</option><option>ASSEGNATO</option><option>PRENOTATO</option><option>IN PRESTITO</option>
+          <option>IN MANUTENZIONE</option><option>GUASTO</option><option>DISMESSO</option><option>VENDUTO</option><option>DA VERIFICARE</option>
+        </select>
+        <select id="assetVerification">
+          <option value="">Tutte le verifiche</option>
+          <option>VERIFICATO</option><option>DA VERIFICARE</option><option>DUBBIO</option><option>NON TROVATO</option><option>ASSEGNAZIONE DA CONFERMARE</option>
+        </select>
+      </div>
+
+      <div class="button-row asset-actions">
+        <button id="newAsset" class="primary">+ Nuovo asset</button>
+        ${isSuperIT()?'<button id="importAssets" class="secondary">Importa censimento Excel</button>':''}
+      </div>
+
+      <div id="assetTable"></div>
+    </div>
+
+    ${isSuperIT()?`<div id="importPanel" class="panel hidden">
+      <h3>Importazione censimento Excel</h3>
+      <p class="muted-line">Il file viene letto dalla Edge Function e non viene archiviato. Le password, PIN e PUK presenti nel foglio non vengono importati.</p>
+      <label>File .xlsx<input id="assetFile" type="file" accept=".xlsx,.xls"></label>
+      <div class="info-box">
+        Tutti i dati importati partono come <b>DA VERIFICARE</b>. Un asset già verificato nel portale non viene sovrascritto da una nuova importazione legacy.
+      </div>
+      <button id="runAssetImport" class="primary">Avvia importazione</button>
+      <p id="assetImportResult"></p>
+    </div>`:''}`;
+
+  const render=()=>{
+    const filtered=rows.filter(x=>{
+      if(site&&x.site!==site)return false;
+      if(status&&x.status!==status)return false;
+      if(verification&&x.verification_status!==verification)return false;
+      if(q){
+        const h=`${x.asset_code||''} ${x.category||''} ${x.brand||''} ${x.model||''} ${x.serial_number||''} ${x.site||''} ${x.position||''} ${x.assigned_user_name||''} ${x.assigned_user_email||''}`.toLowerCase();
+        if(!h.includes(q.toLowerCase()))return false;
+      }
+      return true;
+    });
+
+    $('assetTable').innerHTML=filtered.length?`
+      <div class="tablewrap"><table>
+        <thead><tr><th>Codice</th><th>Categoria / Modello</th><th>Sede / Posizione</th><th>Assegnato a</th><th>Stato</th><th>Verifica</th><th>Ultima verifica</th></tr></thead>
+        <tbody>${filtered.map(a=>`<tr class="click" data-asset="${a.id}">
+          <td><b>${esc(a.asset_code)}</b><small class="subline">${esc(a.serial_number||'')}</small></td>
+          <td><b>${esc(a.category||'—')}</b><small class="subline">${esc([a.brand,a.model].filter(Boolean).join(' ')||'')}</small></td>
+          <td>${esc(a.site||'—')}<small class="subline">${esc(a.position||'')}</small></td>
+          <td>${esc(a.assigned_user_name||a.assigned_user_email||'—')}</td>
+          <td>${assetStatusBadge(a.status)}</td>
+          <td>${verifyBadge(a.verification_status)}</td>
+          <td>${a.verified_at?`${fmt(a.verified_at)}<small class="subline">${esc(a.verified_by||'')}</small>`:'—'}</td>
+        </tr>`).join('')}</tbody>
+      </table></div>`:'<div class="empty">Nessun asset trovato.</div>';
+
+    document.querySelectorAll('[data-asset]').forEach(x=>x.onclick=()=>assetDetail(+x.dataset.asset));
+  };
+
+  $('assetSearch').oninput=e=>{q=e.target.value;render()};
+  $('assetSite').onchange=e=>{site=e.target.value;render()};
+  $('assetStatus').onchange=e=>{status=e.target.value;render()};
+  $('assetVerification').onchange=e=>{verification=e.target.value;render()};
+  $('newAsset').onclick=()=>assetEdit(null);
+
+  if($('importAssets'))$('importAssets').onclick=()=>$('importPanel').classList.toggle('hidden');
+
+  if($('runAssetImport'))$('runAssetImport').onclick=async()=>{
+    const file=$('assetFile').files?.[0];
+    if(!file)return toast('Seleziona un file Excel');
+    $('assetImportResult').textContent='Importazione in corso...';
+
+    try{
+      const b64=await new Promise((resolve,reject)=>{
+        const r=new FileReader();
+        r.onload=()=>resolve(String(r.result).split(',')[1]);
+        r.onerror=()=>reject(r.error);
+        r.readAsDataURL(file);
+      });
+
+      const res=await api('/functions/v1/import-censimento',{
+        method:'POST',
+        body:{file_name:file.name,file_base64:b64}
+      });
+
+      $('assetImportResult').innerHTML=`Importazione completata: <b>${res.inserted||0}</b> nuovi, <b>${res.updated||0}</b> aggiornati, <b>${res.skipped_verified||0}</b> già verificati non modificati, <b>${res.skipped_invalid||0}</b> righe ignorate.`;
+      toast('Censimento importato');
+      setTimeout(()=>census(),1200);
+    }catch(err){
+      $('assetImportResult').textContent=err.message;
+    }
+  };
+
+  render();
+}
+
+async function assetEdit(id){
+  if(!isITRole())return userHome();
+
+  let a={
+    asset_code:'',category:'',brand:'',model:'',serial_number:'',site:'',position:'',
+    assigned_user_name:'',assigned_user_email:'',storage:'',gpu:'',ram:'',cpu:'',
+    notes:'',status:'DA VERIFICARE',verification_status:'DA VERIFICARE',account_identifier:''
+  };
+
+  if(id){
+    const rows=await select('assets',`select=*&id=eq.${id}`);
+    if(!rows.length)return;
+    a=rows[0];
+  }
+
+  page(id?'Modifica asset':'Nuovo asset',id?a.asset_code:'Inserimento manuale');
+
+  $('content').innerHTML=`
+    <div class="panel">
+      <form id="assetForm" class="formgrid">
+        <label>Codice asset<input id="aCode" value="${esc(a.asset_code||'')}" required placeholder="A0345"></label>
+        <label>Categoria<input id="aCategory" value="${esc(a.category||'')}"></label>
+        <label>Marca<input id="aBrand" value="${esc(a.brand||'')}"></label>
+        <label>Modello<input id="aModel" value="${esc(a.model||'')}"></label>
+        <label>Seriale<input id="aSerial" value="${esc(a.serial_number||'')}"></label>
+        <label>Sede<input id="aSite" value="${esc(a.site||'')}"></label>
+        <label>Posizione<input id="aPosition" value="${esc(a.position||'')}"></label>
+        <label>Utente assegnato<input id="aUserName" value="${esc(a.assigned_user_name||'')}"></label>
+        <label>Email utente<input id="aUserEmail" type="email" value="${esc(a.assigned_user_email||'')}"></label>
+        <label>Account associato <span class="optional">(solo identificativo)</span><input id="aAccount" value="${esc(a.account_identifier||'')}"></label>
+        <label>SSD / HDD<input id="aStorage" value="${esc(a.storage||'')}"></label>
+        <label>Scheda video<input id="aGpu" value="${esc(a.gpu||'')}"></label>
+        <label>RAM<input id="aRam" value="${esc(a.ram||'')}"></label>
+        <label>CPU<input id="aCpu" value="${esc(a.cpu||'')}"></label>
+        <label>Stato<select id="aStatus">
+          <option>DISPONIBILE</option><option>ASSEGNATO</option><option>PRENOTATO</option><option>IN PRESTITO</option>
+          <option>IN MANUTENZIONE</option><option>GUASTO</option><option>DISMESSO</option><option>VENDUTO</option><option>DA VERIFICARE</option>
+        </select></label>
+        <label>Stato verifica<select id="aVerify">
+          <option>VERIFICATO</option><option>DA VERIFICARE</option><option>DUBBIO</option><option>NON TROVATO</option><option>ASSEGNAZIONE DA CONFERMARE</option>
+        </select></label>
+        <label class="full">Note <span class="optional">(facoltative)</span><textarea id="aNotes" rows="4">${esc(a.notes||'')}</textarea></label>
+        <div class="full info-box">
+          Le password non devono essere inserite nel censimento. Il campo “Account associato” serve solo per indicare quale Apple ID / account Google è collegato al dispositivo.
+        </div>
+        <div class="full button-row">
+          <button class="primary">Salva asset</button>
+          ${id?'<button id="verifyAssetNow" type="button" class="secondary">Segna verificato ora</button>':''}
+          <button id="backToCensus" type="button" class="ghost">Annulla</button>
+        </div>
+      </form>
+    </div>`;
+
+  $('aStatus').value=a.status||'DA VERIFICARE';
+  $('aVerify').value=a.verification_status||'DA VERIFICARE';
+  $('backToCensus').onclick=()=>census();
+
+  if($('verifyAssetNow'))$('verifyAssetNow').onclick=async()=>{
+    const before=a.verification_status;
+    await update('assets',`id=eq.${id}`,{
+      verification_status:'VERIFICATO',
+      verified_by:currentITName(),
+      verified_at:new Date().toISOString(),
+      updated_at:new Date().toISOString()
+    });
+    await insert('asset_history',{
+      asset_id:id,
+      event_type:'VERIFICA',
+      field_name:'verification_status',
+      old_value:before||null,
+      new_value:'VERIFICATO',
+      changed_by:currentITName(),
+      changed_by_id:user.id
+    },false);
+    toast('Asset verificato');
+    assetDetail(id);
+  };
+
+  $('assetForm').onsubmit=async e=>{
+    e.preventDefault();
+
+    const data={
+      asset_code:$('aCode').value.trim().toUpperCase(),
+      category:$('aCategory').value.trim()||null,
+      brand:$('aBrand').value.trim()||null,
+      model:$('aModel').value.trim()||null,
+      serial_number:$('aSerial').value.trim()||null,
+      site:$('aSite').value.trim()||null,
+      position:$('aPosition').value.trim()||null,
+      assigned_user_name:$('aUserName').value.trim()||null,
+      assigned_user_email:$('aUserEmail').value.trim().toLowerCase()||null,
+      account_identifier:$('aAccount').value.trim()||null,
+      storage:$('aStorage').value.trim()||null,
+      gpu:$('aGpu').value.trim()||null,
+      ram:$('aRam').value.trim()||null,
+      cpu:$('aCpu').value.trim()||null,
+      status:$('aStatus').value,
+      verification_status:$('aVerify').value,
+      notes:$('aNotes').value.trim()||null,
+      updated_at:new Date().toISOString()
+    };
+
+    if(data.assigned_user_email&&!data.assigned_user_email.endsWith('@archea.it')){
+      throw new Error('La mail assegnatario deve essere @archea.it.');
+    }
+
+    try{
+      if(id){
+        const tracked=[
+          ['status',a.status,data.status],
+          ['verification_status',a.verification_status,data.verification_status],
+          ['site',a.site,data.site],
+          ['position',a.position,data.position],
+          ['assigned_user_name',a.assigned_user_name,data.assigned_user_name],
+          ['assigned_user_email',a.assigned_user_email,data.assigned_user_email]
+        ];
+
+        await update('assets',`id=eq.${id}`,data);
+
+        for(const [field,oldv,newv] of tracked){
+          if((oldv||'')!==(newv||'')){
+            await insert('asset_history',{
+              asset_id:id,event_type:'MODIFICA',field_name:field,
+              old_value:oldv==null?null:String(oldv),
+              new_value:newv==null?null:String(newv),
+              changed_by:currentITName(),changed_by_id:user.id
+            },false);
+          }
+        }
+
+        if(data.verification_status==='VERIFICATO'&&a.verification_status!=='VERIFICATO'){
+          await update('assets',`id=eq.${id}`,{verified_by:currentITName(),verified_at:new Date().toISOString()});
+        }
+
+        toast('Asset aggiornato');
+        assetDetail(id);
+      }else{
+        const rows=await insert('assets',{
+          ...data,
+          created_by:user.id,
+          created_by_name:currentITName()
+        },true);
+        const created=rows[0];
+        await insert('asset_history',{
+          asset_id:created.id,event_type:'CREAZIONE',
+          new_value:'Asset creato manualmente',
+          changed_by:currentITName(),changed_by_id:user.id
+        },false);
+        toast('Asset creato');
+        assetDetail(created.id);
+      }
+    }catch(err){
+      toast(err.message);
+    }
+  };
+}
+
+async function assetDetail(id){
+  if(!isITRole())return userHome();
+
+  const rows=await select('assets',`select=*&id=eq.${id}`);
+  if(!rows.length)return;
+  const a=rows[0];
+  const history=await select('asset_history',`select=*&asset_id=eq.${id}&order=created_at.desc&limit=100`);
+
+  page('Dettaglio asset',a.asset_code);
+
+  $('content').innerHTML=`
+    <div class="panel">
+      <div class="asset-detail-head">
+        <div>
+          <span class="asset-code-big">${esc(a.asset_code)}</span>
+          <h3>${esc([a.brand,a.model].filter(Boolean).join(' ')||a.category||'Asset')}</h3>
+          <p class="muted-line">${esc(a.category||'')} ${a.serial_number?`• S/N ${esc(a.serial_number)}`:''}</p>
+        </div>
+        <div class="asset-badges">${assetStatusBadge(a.status)} ${verifyBadge(a.verification_status)}</div>
+      </div>
+
+      <div class="asset-info-grid">
+        <div><span>Sede</span><b>${esc(a.site||'—')}</b></div>
+        <div><span>Posizione</span><b>${esc(a.position||'—')}</b></div>
+        <div><span>Assegnato a</span><b>${esc(a.assigned_user_name||a.assigned_user_email||'—')}</b></div>
+        <div><span>Account associato</span><b>${esc(a.account_identifier||'—')}</b></div>
+        <div><span>SSD / HDD</span><b>${esc(a.storage||'—')}</b></div>
+        <div><span>GPU</span><b>${esc(a.gpu||'—')}</b></div>
+        <div><span>RAM</span><b>${esc(a.ram||'—')}</b></div>
+        <div><span>CPU</span><b>${esc(a.cpu||'—')}</b></div>
+      </div>
+
+      ${a.notes?`<div class="info-box"><b>Note:</b> ${esc(a.notes)}</div>`:''}
+      ${a.source_sheet?`<p class="muted-line">Origine legacy: ${esc(a.source_sheet)}${a.source_row?` • riga ${a.source_row}`:''}</p>`:''}
+      ${a.verified_at?`<p class="verified-line">Verificato da <b>${esc(a.verified_by||'IT')}</b> il ${fmt(a.verified_at)}</p>`:''}
+
+      <div class="button-row">
+        <button id="editAsset" class="primary">Modifica asset</button>
+        ${a.verification_status!=='VERIFICATO'?'<button id="quickVerify" class="secondary">Verifica ora</button>':''}
+        <button id="backCensus" class="ghost">Torna al censimento</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h3>Storico asset</h3>
+      ${history.length?`<div class="history-list">${history.map(h=>`
+        <div class="history-item">
+          <div><b>${esc(h.event_type)}</b>${h.field_name?` • ${esc(h.field_name)}`:''}</div>
+          <div>${h.old_value!=null?`<span class="history-old">${esc(h.old_value)}</span> → `:''}<span>${esc(h.new_value||'')}</span></div>
+          <small>${fmt(h.created_at)} • ${esc(h.changed_by||'Sistema')}</small>
+        </div>`).join('')}</div>`:'<div class="empty">Nessuno storico disponibile.</div>'}
+    </div>`;
+
+  $('editAsset').onclick=()=>assetEdit(id);
+  $('backCensus').onclick=()=>census();
+
+  if($('quickVerify'))$('quickVerify').onclick=async()=>{
+    await update('assets',`id=eq.${id}`,{
+      verification_status:'VERIFICATO',
+      verified_by:currentITName(),
+      verified_at:new Date().toISOString(),
+      updated_at:new Date().toISOString()
+    });
+    await insert('asset_history',{
+      asset_id:id,event_type:'VERIFICA',field_name:'verification_status',
+      old_value:a.verification_status||null,new_value:'VERIFICATO',
+      changed_by:currentITName(),changed_by_id:user.id
+    },false);
+    toast('Asset verificato');
+    assetDetail(id);
+  };
+}
+
 function placeholder(k){
   if(!isITRole())return userHome();
   const m={
@@ -1191,6 +1651,7 @@ function nav(v){
   else if(v==='calendar')calendar();
   else if(v==='prenotazioni')bookings();
   else if(v==='movimenti')hrHistory();
+  else if(v==='censimento')census();
   else if(v==='hr-new')hrNewMovement();
   else if(v==='hr-history')hrHistory();
   else if(v==='hr-stats')hrStats();
