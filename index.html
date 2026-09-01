@@ -1,8 +1,10 @@
 <!doctype html>
 <html lang="it">
 <head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Archea Service Desk</title><link rel="stylesheet" href="styles.css">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Archea Service Desk</title>
+<link rel="stylesheet" href="styles.css">
 </head>
 <body>
 <div id="toast" class="toast hidden"></div>
@@ -13,18 +15,22 @@
     <h1>Archea Service Desk</h1>
     <p>Portale interno IT</p>
     <form id="loginForm">
-      <label>Email<input id="email" type="email" required></label>
-      <label>Password<input id="password" type="password" required></label>
-      <button>Accedi</button>
+      <label>Email<input id="email" type="email" autocomplete="username" required></label>
+      <label>Password<input id="password" type="password" autocomplete="current-password" required></label>
+      <button type="submit">Accedi</button>
     </form>
     <div id="loginErr" class="err"></div>
+    <div id="debugBox" class="debug hidden"></div>
   </div>
 </section>
 
 <section id="app" class="app hidden">
   <aside>
     <div>
-      <div class="brand"><div class="logo small">A</div><b>Archea<br><span>Service Desk</span></b></div>
+      <div class="brand">
+        <div class="logo small">A</div>
+        <b>Archea<br><span>Service Desk</span></b>
+      </div>
       <nav>
         <button data-view="home">Dashboard</button>
         <button data-view="new">Nuovo ticket</button>
@@ -35,14 +41,23 @@
         <button id="itNav" data-view="it" class="hidden">Gestione IT</button>
       </nav>
     </div>
-    <div class="account"><b id="who"></b><span id="role"></span><button id="logout" class="ghost">Esci</button></div>
+    <div class="account">
+      <b id="who"></b>
+      <span id="role"></span>
+      <button id="logout" class="ghost">Esci</button>
+    </div>
   </aside>
   <main>
-    <header><div><h2 id="title">Dashboard</h2><p id="subtitle"></p></div></header>
+    <header>
+      <div>
+        <h2 id="title">Dashboard</h2>
+        <p id="subtitle"></p>
+      </div>
+    </header>
     <div id="content"></div>
   </main>
 </section>
 
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="app.js"></script>
-</body></html>
+</body>
+</html>

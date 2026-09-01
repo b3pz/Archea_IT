@@ -1,21 +1,21 @@
-ARCHEA SERVICE DESK V1
+ARCHEA SERVICE DESK V1.1
 
-1) Supabase > SQL Editor: eseguire supabase_security.sql una sola volta.
-2) Verificare profiles:
-   giuseppe.milano@archea.it -> IT
-   rider.novelli@archea.it -> USER
-3) Pubblicare index.html, styles.css e app.js nella root di un repository GitHub.
-4) GitHub > Settings > Pages > Deploy from branch > main / root.
+Questa versione NON usa CDN esterni per Supabase.
+Il login e le chiamate al database usano direttamente le API HTTPS di Supabase con fetch.
 
-Funzioni:
-- login email/password
-- ruoli USER e IT
-- apertura ticket
-- storico personale
-- dashboard IT
-- commenti e note interne
-- checklist IT
-- stato e assegnazione ticket
-- menu Movimenti, Prenotazioni e Censimento predisposti
+COME AGGIORNARE GITHUB
+1. Estrai lo ZIP.
+2. Nel repository Archea_IT sostituisci:
+   - index.html
+   - styles.css
+   - app.js
+3. Fai Commit changes.
+4. Attendi 1-2 minuti e ricarica GitHub Pages con CTRL+F5.
 
-Telegram NON è ancora nel frontend: il token del bot va tenuto lato server e verrà collegato con una Supabase Edge Function.
+NON serve modificare Supabase se hai già:
+- profiles corretti
+- RLS/policies eseguite
+- Giuseppe = IT
+- Rider = USER
+
+Se compare un errore, ora viene mostrato direttamente sotto il login.
