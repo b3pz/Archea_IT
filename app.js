@@ -1,5 +1,5 @@
 
-const BASE='https://igfpkpcksllmofqfkoxkf.supabase.co';
+const BASE='https://igfpkpcksllmofqfoxkf.supabase.co';
 const KEY='sb_publishable_wuq5rwy4w6ca7nvJTbrXzA_izhCmrf9';
 
 let session=null,user=null,profile=null;
