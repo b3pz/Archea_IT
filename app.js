@@ -2,6 +2,40 @@
 const BASE='https://igfpkpcksllmofqfoxkf.supabase.co';
 const KEY='sb_publishable_wuq5rwy4w6ca7nvJTbrXzA_izhCmrf9';
 let session=null,user=null,profile=null;
+let currentView=null;
+let previousView=null;
+
+function applyTheme(theme){
+  const chosen=theme==='dark'?'dark':'light';
+  document.documentElement.dataset.theme=chosen;
+  localStorage.setItem('archea_sd_theme',chosen);
+  const label=$('themeLabel');
+  if(label) label.textContent=chosen==='dark'?'Chiaro':'Scuro';
+}
+function initTheme(){
+  const saved=localStorage.getItem('archea_sd_theme');
+  const preferred=saved || (window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');
+  applyTheme(preferred);
+}
+function updateBackButton(){
+  const b=$('backBtn');
+  if(!b)return;
+  b.classList.toggle('hidden',!previousView);
+}
+function openSubView(kind,fn){
+  if(currentView!==kind){
+    previousView=currentView || (isITRole()?'home':'mine');
+    currentView=kind;
+  }
+  updateBackButton();
+  return fn();
+}
+function goBack(){
+  const target=previousView || (isITRole()?'home':'mine');
+  previousView=null;
+  currentView=null;
+  nav(target);
+}
 const $=i=>document.getElementById(i);
 const esc=s=>(s||'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
 const fmt=d=>d?new Intl.DateTimeFormat('it-IT',{dateStyle:'short',timeStyle:'short'}).format(new Date(d)):'—';
@@ -154,8 +188,8 @@ function table(rows,it=false,quick=false){
   </table></div>`;
 }
 function wire(){
-  document.querySelectorAll('[data-id]').forEach(r=>r.onclick=()=>detail(+r.dataset.id));
-  document.querySelectorAll('[data-open]').forEach(r=>r.onclick=e=>{e.stopPropagation();detail(+r.dataset.open)});
+  document.querySelectorAll('[data-id]').forEach(r=>r.onclick=()=>openSubView('ticket-detail',()=>detail(+r.dataset.id)));
+  document.querySelectorAll('[data-open]').forEach(r=>r.onclick=e=>{e.stopPropagation();openSubView('ticket-detail',()=>detail(+r.dataset.open))});
 }
 function dateOnly(d){return d?new Intl.DateTimeFormat('it-IT',{dateStyle:'medium'}).format(new Date(d+'T12:00:00')):'—'}
 function bookingStatusBadge(s){
@@ -593,7 +627,7 @@ async function bookings(){
         <button class="secondary">Gestisci</button>
       </div>`).join(''):'<div class="empty">Nessuna prenotazione.</div>';
 
-    document.querySelectorAll('[data-booking]').forEach(x=>x.onclick=()=>bookingDetail(+x.dataset.booking));
+    document.querySelectorAll('[data-booking]').forEach(x=>x.onclick=()=>openSubView('booking-detail',()=>bookingDetail(+x.dataset.booking)));
   };
 
   $('bookingSearch').oninput=render;
@@ -1199,14 +1233,14 @@ async function census(){
         </tr>`).join('')}</tbody>
       </table></div>`:'<div class="empty">Nessun asset trovato.</div>';
 
-    document.querySelectorAll('[data-asset]').forEach(x=>x.onclick=()=>assetDetail(+x.dataset.asset));
+    document.querySelectorAll('[data-asset]').forEach(x=>x.onclick=()=>openSubView('asset-detail',()=>assetDetail(+x.dataset.asset)));
   };
 
   $('assetSearch').oninput=e=>{q=e.target.value;render()};
   $('assetSite').onchange=e=>{site=e.target.value;render()};
   $('assetStatus').onchange=e=>{status=e.target.value;render()};
   $('assetVerification').onchange=e=>{verification=e.target.value;render()};
-  $('newAsset').onclick=()=>assetEdit(null);
+  $('newAsset').onclick=()=>openSubView('asset-edit',()=>assetEdit(null));
 
   if($('importAssets'))$('importAssets').onclick=()=>$('importPanel').classList.toggle('hidden');
 
@@ -1552,7 +1586,7 @@ async function detail(id){
     $('priority').value=t.priorita||'NORMALE';
     $('assigneeSelect').value=t.assigned_to||'';
     $('outcome').value=t.outcome||'';
-    if($('manageMaterial')&&materialBooking)$('manageMaterial').onclick=()=>bookingDetail(materialBooking.id);
+    if($('manageMaterial')&&materialBooking)$('manageMaterial').onclick=()=>openSubView('booking-detail',()=>bookingDetail(materialBooking.id));
 
     if($('takeTicket'))$('takeTicket').onclick=async()=>{
       await update('tickets',`id=eq.${id}`,{assigned_to:user.id,assegnato_a:currentITName(),stato:'IN LAVORAZIONE'});
@@ -1638,6 +1672,13 @@ function nav(v){
   const normalUserViews=['new','mine'];
   const hrViews=['hr-new','hr-history','hr-stats'];
 
+  if(currentView!==v){
+    if(currentView && !String(currentView).includes('detail') && currentView!=='asset-edit'){
+      previousView=currentView;
+    }
+    currentView=v;
+  }
+
   if(isHR()){
     if(!normalUserViews.includes(v)&&!hrViews.includes(v))return userHome();
   }else if(!isITRole()&&!normalUserViews.includes(v)){
@@ -1656,10 +1697,12 @@ function nav(v){
   else if(v==='hr-history')hrHistory();
   else if(v==='hr-stats')hrStats();
   else placeholder(v);
+
+  updateBackButton();
 }
 async function boot(){const raw=localStorage.getItem('archea_sd_session');if(raw){try{session=JSON.parse(raw);user=await api('/auth/v1/user')}catch{clear()}}if(!user){$('login').classList.remove('hidden');$('app').classList.add('hidden');return}const p=await select('profiles',`select=*&id=eq.${user.id}`);if(!p.length){clear();$('loginErr').textContent='Profilo non trovato';return}profile=p[0];$('who').textContent=profile.nome||user.email;$('role').textContent=profile.ruolo;$('userNav').classList.toggle('hidden',isITRole()||isHR());
 $('hrNav').classList.toggle('hidden',!isHR());
-$('itNav').classList.toggle('hidden',!isITRole());$('login').classList.add('hidden');$('app').classList.remove('hidden');isITRole()?home():userHome();
+$('itNav').classList.toggle('hidden',!isITRole());$('login').classList.add('hidden');$('app').classList.remove('hidden');currentView=isITRole()?'home':'mine';previousView=null;isITRole()?home():userHome();updateBackButton();
 refreshNotifications();
 setInterval(refreshNotifications,30000);
 setInterval(async()=>{
@@ -1671,4 +1714,9 @@ setInterval(async()=>{
 },10*60*1000);
 }
 $('loginForm').onsubmit=async e=>{e.preventDefault();$('loginErr').textContent='';try{const d=await api('/auth/v1/token?grant_type=password',{method:'POST',auth:false,body:{email:$('email').value.trim(),password:$('password').value}});save(d);user=d.user;await boot()}catch(err){$('loginErr').textContent=err.message}}
-$('logout').onclick=()=>{clear();location.reload()};document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>nav(b.dataset.view));boot();
+$('logout').onclick=()=>{clear();location.reload()};
+document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>nav(b.dataset.view));
+if($('backBtn')) $('backBtn').onclick=goBack;
+if($('themeToggle')) $('themeToggle').onclick=()=>applyTheme(document.documentElement.dataset.theme==='dark'?'light':'dark');
+initTheme();
+boot();

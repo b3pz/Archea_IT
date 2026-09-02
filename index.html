@@ -11,57 +11,35 @@
 <div id="toast" class="toast hidden"></div>
 
 <section id="login" class="login">
-  <div class="login-shell">
-    <section class="login-identity">
-      <div class="login-brand">
-        <img src="logo_archea.png" class="login-logo" alt="Archea Associati">
+  <div class="login-compact">
+    <div class="login-logo-panel">
+      <img src="logo_archea.png" alt="Archea Associati">
+      <span>IT SERVICE DESK</span>
+    </div>
+
+    <div class="login-form-panel">
+      <div class="login-form-heading">
+        <span class="eyebrow">PORTALE INTERNO</span>
+        <h1>Accesso</h1>
       </div>
 
-      <div class="login-copy">
-        <span class="eyebrow">ARCHEA DIGITAL SERVICES</span>
-        <h1>Service Desk</h1>
-        <p>Un unico punto di accesso per supporto, richieste e servizi del Dipartimento IT.</p>
-      </div>
+      <form id="loginForm">
+        <label>ID / Email
+          <input id="email" type="email" autocomplete="username" required placeholder="nome.cognome@archea.it">
+        </label>
+        <label>Password
+          <input id="password" type="password" autocomplete="current-password" required placeholder="••••••••">
+        </label>
+        <button type="submit" class="primary login-submit">Accedi</button>
+      </form>
 
-      <div class="login-meta">
-        <span>Portale interno</span>
-        <span>Supporto IT</span>
+      <div id="loginErr" class="err"></div>
+
+      <div class="login-signature">
+        <strong>Sviluppato dal Dipartimento IT</strong>
         <span>Archea Associati</span>
       </div>
-    </section>
-
-    <section class="login-access">
-      <div class="login-card">
-        <div class="login-card-head">
-          <span class="section-index">01</span>
-          <div>
-            <h2>Accesso</h2>
-            <p>Utilizza le credenziali abilitate al Service Desk.</p>
-          </div>
-        </div>
-
-        <form id="loginForm">
-          <label>Email
-            <input id="email" type="email" autocomplete="username" required placeholder="nome.cognome@archea.it">
-          </label>
-          <label>Password
-            <input id="password" type="password" autocomplete="current-password" required placeholder="••••••••">
-          </label>
-          <button type="submit" class="primary login-submit">Accedi al portale</button>
-        </form>
-
-        <div id="loginErr" class="err"></div>
-
-        <div class="login-security">
-          Accesso riservato agli utenti autorizzati.
-        </div>
-      </div>
-
-      <footer class="login-footer">
-        <strong>Sviluppato dal Dipartimento IT</strong>
-        <span>Archea Associati · Uso interno aziendale</span>
-      </footer>
-    </section>
+    </div>
   </div>
 </section>
 
@@ -128,13 +106,21 @@
     </div>
 
     <header class="topbar">
-      <div class="page-heading">
-        <span class="eyebrow">SERVICE DESK</span>
-        <h2 id="title"></h2>
-        <p id="subtitle"></p>
+      <div class="page-heading-wrap">
+        <button id="backBtn" class="back-btn hidden" type="button" aria-label="Torna indietro">← <span>Torna indietro</span></button>
+        <div class="page-heading">
+          <span class="eyebrow">SERVICE DESK</span>
+          <h2 id="title"></h2>
+          <p id="subtitle"></p>
+        </div>
       </div>
 
-      <div class="notification-wrap">
+      <div class="top-actions">
+        <button id="themeToggle" class="theme-toggle" type="button" aria-label="Cambia tema">
+          <span class="theme-icon">◐</span>
+          <span id="themeLabel">Scuro</span>
+        </button>
+        <div class="notification-wrap">
         <button id="bellBtn" class="bell" aria-label="Notifiche" title="Notifiche">
           <span class="bell-shape"></span>
           <span id="bellCount" class="bell-count hidden">0</span>
@@ -149,6 +135,7 @@
             <button id="markAllRead" class="text-btn">Segna tutte lette</button>
           </div>
           <div id="notificationList"></div>
+        </div>
         </div>
       </div>
     </header>
