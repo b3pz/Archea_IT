@@ -563,7 +563,7 @@ async function it(){
         </tr>`).join('')}</tbody>
       </table></div>`;
 
-    document.querySelectorAll('[data-open]').forEach(x=>x.onclick=()=>detail(+x.dataset.open));
+    document.querySelectorAll('[data-open]').forEach(x=>x.onclick=()=>openSubView('ticket-detail',()=>detail(+x.dataset.open)));
     document.querySelectorAll('[data-take]').forEach(btn=>btn.onclick=async()=>{
       const id=+btn.dataset.take;
       await update('tickets',`id=eq.${id}`,{
@@ -897,60 +897,296 @@ function printDeliverySheet(b){
 
 async function hrNewMovement(){
   if(!isHR()&&!isITRole())return userHome();
-  page('Nuovo movimento','Registra un movimento con impatto sul reparto IT');
+  page('Nuovo movimento','Ingressi, uscite e spostamenti con impatto operativo sul reparto IT');
+
+  const siteOptions=['Firenze','Milano','Roma','Genova','Tirana','Parigi','Dubai'];
 
   $('content').innerHTML=`
-    <div class="panel">
+    <div class="panel hr-movement-panel">
+      <div class="hr-movement-intro">
+        <div>
+          <span class="eyebrow">MOVIMENTO PERSONA</span>
+          <h3>Registra un evento HR</h3>
+          <p>Il sistema crea il ticket IT, applica i controlli anti-duplicazione e prepara una checklist operativa specifica.</p>
+        </div>
+        <div id="moveImpact" class="movement-impact">
+          <b>Seleziona il tipo di movimento</b>
+          <span>Vedrai qui le attività IT previste.</span>
+        </div>
+      </div>
+
       <form id="hrMoveForm" class="formgrid">
         <label>Tipo movimento
           <select id="moveType" required>
             <option value="">Seleziona...</option>
-            <option>NUOVO INGRESSO</option>
-            <option>USCITA</option>
-            <option>CAMBIO POSTAZIONE</option>
-            <option>CAMBIO SEDE</option>
+            <option value="NUOVO INGRESSO">Nuovo ingresso</option>
+            <option value="USCITA">Uscita</option>
+            <option value="CAMBIO POSTAZIONE">Cambio postazione</option>
+            <option value="CAMBIO SEDE">Cambio sede</option>
           </select>
         </label>
-        <label>Data movimento<input id="moveDate" type="date" required></label>
 
-        <label>Nome<input id="personName" required></label>
-        <label>Cognome<input id="personSurname" required></label>
-        <label>Email aziendale<input id="personEmail" type="email" placeholder="nome.cognome@archea.it"></label>
-        <label>Sede attuale<input id="currentSite"></label>
-        <label>Nuova sede<input id="newSite"></label>
-        <label>Postazione attuale<input id="currentDesk"></label>
-        <label>Nuova postazione<input id="newDesk"></label>
-        <label class="full">Note <span class="optional">(facoltative)</span>
-          <textarea id="moveNotes" rows="4"></textarea>
+        <label>Data movimento
+          <input id="moveDate" type="date" required>
         </label>
 
-        <div class="full info-box">
-          Il movimento crea automaticamente un ticket IT e viene salvato nello storico HR.
-          Per ora non viene ancora scritto direttamente nel file Excel HR.
+        <label>Nome
+          <input id="personName" required autocomplete="off">
+        </label>
+
+        <label>Cognome
+          <input id="personSurname" required autocomplete="off">
+        </label>
+
+        <label class="full">Email aziendale
+          <input id="personEmail" type="email" placeholder="nome.cognome@archea.it" autocomplete="off">
+          <span class="field-help">Consigliata: è il dato più affidabile per riconoscere la persona ed evitare duplicati.</span>
+        </label>
+
+        <div id="currentBlock" class="full movement-block hidden">
+          <div class="movement-block-title">Situazione attuale</div>
+          <div class="formgrid">
+            <label id="currentSiteLabel">Sede attuale
+              <input id="currentSite" list="siteList" autocomplete="off">
+            </label>
+            <label id="currentDeskLabel">Postazione attuale
+              <input id="currentDesk" autocomplete="off" placeholder="Es. P2-14">
+            </label>
+          </div>
         </div>
 
-        <div class="full">
+        <div id="newBlock" class="full movement-block hidden">
+          <div class="movement-block-title">Nuova situazione</div>
+          <div class="formgrid">
+            <label id="newSiteLabel">Nuova sede
+              <input id="newSite" list="siteList" autocomplete="off">
+            </label>
+            <label id="newDeskLabel">Nuova postazione
+              <input id="newDesk" autocomplete="off" placeholder="Es. P3-08">
+            </label>
+          </div>
+        </div>
+
+        <datalist id="siteList">
+          ${siteOptions.map(s=>`<option value="${esc(s)}"></option>`).join('')}
+        </datalist>
+
+        <label class="full">Note <span class="optional">(facoltative)</span>
+          <textarea id="moveNotes" rows="4" placeholder="Informazioni utili per il reparto IT"></textarea>
+        </label>
+
+        <div id="movementValidation" class="full movement-validation hidden"></div>
+
+        <div class="full movement-explain">
+          <div><b>1</b><span>Controllo persona e duplicati</span></div>
+          <div><b>2</b><span>Creazione ticket IT</span></div>
+          <div><b>3</b><span>Checklist dedicata</span></div>
+          <div><b>4</b><span>Storico movimento</span></div>
+        </div>
+
+        <div class="full button-row">
           <button class="primary">Registra movimento</button>
+          <button type="button" id="clearMovement" class="ghost">Pulisci</button>
         </div>
       </form>
+
       <p id="hrMoveResult"></p>
     </div>`;
 
   $('moveDate').value=new Date().toISOString().slice(0,10);
+
+  const impactCopy={
+    'NUOVO INGRESSO':{
+      title:'Nuovo ingresso',
+      text:'Account e accessi · preparazione postazione · hardware · software/licenze · verifica finale'
+    },
+    'USCITA':{
+      title:'Uscita',
+      text:'Recupero hardware · disabilitazione accessi · revoca licenze · aggiornamento censimento'
+    },
+    'CAMBIO POSTAZIONE':{
+      title:'Cambio postazione',
+      text:'Verifica postazione · monitor/periferiche · rete · aggiornamento posizione degli asset'
+    },
+    'CAMBIO SEDE':{
+      title:'Cambio sede',
+      text:'Verifica hardware assegnato · accessi della nuova sede · rete/VDI · aggiornamento sede degli asset'
+    }
+  };
+
+  const setRequired=(id,on)=>{
+    const el=$(id);
+    if(el)el.required=!!on;
+  };
+
+  const configureForm=()=>{
+    const type=$('moveType').value;
+    const current=$('currentBlock'), next=$('newBlock');
+    current.classList.add('hidden');
+    next.classList.add('hidden');
+
+    ['currentSite','currentDesk','newSite','newDesk'].forEach(id=>setRequired(id,false));
+
+    if(type==='NUOVO INGRESSO'){
+      next.classList.remove('hidden');
+      $('newSiteLabel').classList.remove('hidden');
+      $('newDeskLabel').classList.remove('hidden');
+      setRequired('newSite',true);
+    }else if(type==='USCITA'){
+      current.classList.remove('hidden');
+      $('currentSiteLabel').classList.remove('hidden');
+      $('currentDeskLabel').classList.remove('hidden');
+      setRequired('currentSite',true);
+    }else if(type==='CAMBIO POSTAZIONE'){
+      current.classList.remove('hidden');
+      next.classList.remove('hidden');
+      $('currentSiteLabel').classList.remove('hidden');
+      $('currentDeskLabel').classList.remove('hidden');
+      $('newSiteLabel').classList.add('hidden');
+      $('newDeskLabel').classList.remove('hidden');
+      setRequired('currentSite',true);
+      setRequired('currentDesk',true);
+      setRequired('newDesk',true);
+    }else if(type==='CAMBIO SEDE'){
+      current.classList.remove('hidden');
+      next.classList.remove('hidden');
+      $('currentSiteLabel').classList.remove('hidden');
+      $('currentDeskLabel').classList.remove('hidden');
+      $('newSiteLabel').classList.remove('hidden');
+      $('newDeskLabel').classList.remove('hidden');
+      setRequired('currentSite',true);
+      setRequired('newSite',true);
+    }
+
+    if(!type){
+      $('moveImpact').innerHTML=`<b>Seleziona il tipo di movimento</b><span>Vedrai qui le attività IT previste.</span>`;
+    }else{
+      const c=impactCopy[type];
+      $('moveImpact').innerHTML=`<b>${esc(c.title)}</b><span>${esc(c.text)}</span>`;
+    }
+    $('movementValidation').classList.add('hidden');
+  };
+
+  const personHistory=async(email,name,surname)=>{
+    let rows=[];
+    if(email){
+      rows=await select('hr_movements',
+        `select=id,movement_type,movement_date,status,person_email,person_name,person_surname&person_email=eq.${encodeURIComponent(email)}&status=neq.ANNULLATO&order=movement_date.desc,id.desc`
+      );
+    }else{
+      rows=await select('hr_movements',
+        `select=id,movement_type,movement_date,status,person_email,person_name,person_surname&person_name=ilike.${encodeURIComponent(name)}&person_surname=ilike.${encodeURIComponent(surname)}&status=neq.ANNULLATO&order=movement_date.desc,id.desc`
+      );
+    }
+    return rows;
+  };
+
+  const derivePersonState=(history,date)=>{
+    const relevant=history
+      .filter(x=>!date || !x.movement_date || x.movement_date<=date)
+      .filter(x=>x.movement_type==='NUOVO INGRESSO'||x.movement_type==='USCITA')
+      .sort((a,b)=>(b.movement_date||'').localeCompare(a.movement_date||'') || b.id-a.id);
+    if(!relevant.length)return 'SCONOSCIUTO';
+    return relevant[0].movement_type==='NUOVO INGRESSO'?'ATTIVO':'USCITO';
+  };
+
+  const validateMovement=async()=>{
+    const type=$('moveType').value;
+    const date=$('moveDate').value;
+    const email=$('personEmail').value.trim().toLowerCase();
+    const name=$('personName').value.trim();
+    const surname=$('personSurname').value.trim();
+    const currentSite=$('currentSite')?.value.trim()||'';
+    const newSite=$('newSite')?.value.trim()||'';
+    const currentDesk=$('currentDesk')?.value.trim()||'';
+    const newDesk=$('newDesk')?.value.trim()||'';
+
+    if(!type||!date||!name||!surname)throw new Error('Completa tipo, data, nome e cognome.');
+    if(email&&!email.endsWith('@archea.it'))throw new Error('Se inserita, la mail deve essere aziendale @archea.it.');
+
+    if(type==='NUOVO INGRESSO'&&!newSite)throw new Error('Per un nuovo ingresso indica la sede di ingresso.');
+    if(type==='USCITA'&&!currentSite)throw new Error('Per un’uscita indica la sede attuale.');
+    if(type==='CAMBIO POSTAZIONE'){
+      if(!currentSite||!currentDesk||!newDesk)throw new Error('Per il cambio postazione indica sede, postazione attuale e nuova postazione.');
+      if(currentDesk.toLowerCase()===newDesk.toLowerCase())throw new Error('La nuova postazione deve essere diversa da quella attuale.');
+    }
+    if(type==='CAMBIO SEDE'){
+      if(!currentSite||!newSite)throw new Error('Per il cambio sede indica sede attuale e nuova sede.');
+      if(currentSite.toLowerCase()===newSite.toLowerCase())throw new Error('La nuova sede deve essere diversa da quella attuale.');
+    }
+
+    const history=await personHistory(email,name,surname);
+    const state=derivePersonState(history,date);
+
+    const exactDuplicate=history.some(x=>
+      x.movement_type===type &&
+      x.movement_date===date
+    );
+    if(exactDuplicate)throw new Error('Questo movimento risulta già registrato per la stessa persona e la stessa data.');
+
+    if(type==='NUOVO INGRESSO'&&state==='ATTIVO'){
+      throw new Error('La persona risulta già attiva nello storico. Verifica prima di creare un secondo ingresso.');
+    }
+    if(type==='USCITA'&&state==='USCITO'){
+      throw new Error('La persona risulta già uscita. Verifica lo storico prima di registrare una nuova uscita.');
+    }
+    if((type==='CAMBIO SEDE'||type==='CAMBIO POSTAZIONE')&&state==='USCITO'){
+      throw new Error('La persona risulta uscita. Non è possibile registrare uno spostamento senza un nuovo ingresso.');
+    }
+
+    const needsManualCheck=state==='SCONOSCIUTO' && type!=='NUOVO INGRESSO';
+
+    return {history,state,needsManualCheck};
+  };
+
+  $('moveType').onchange=configureForm;
+  $('clearMovement').onclick=()=>{
+    $('hrMoveForm').reset();
+    $('moveDate').value=new Date().toISOString().slice(0,10);
+    $('hrMoveResult').textContent='';
+    configureForm();
+  };
+
+  ['personEmail','personName','personSurname','moveDate'].forEach(id=>{
+    $(id).addEventListener('change',async()=>{
+      const type=$('moveType').value;
+      if(!type||!$('personName').value.trim()||!$('personSurname').value.trim())return;
+      try{
+        const result=await validateMovement();
+        const box=$('movementValidation');
+        box.classList.remove('hidden','warning','ok');
+        if(result.needsManualCheck){
+          box.classList.add('warning');
+          box.innerHTML=`<b>Storico precedente non trovato</b><span>Il movimento potrà essere creato, ma resterà DA VERIFICARE per il controllo IT.</span>`;
+        }else{
+          box.classList.add('ok');
+          box.innerHTML=`<b>Controllo preliminare OK</b><span>Stato precedente rilevato: ${esc(result.state)}.</span>`;
+        }
+      }catch(err){
+        const box=$('movementValidation');
+        box.classList.remove('hidden','ok');
+        box.classList.add('warning');
+        box.innerHTML=`<b>Controllo</b><span>${esc(err.message)}</span>`;
+      }
+    });
+  });
 
   $('hrMoveForm').onsubmit=async e=>{
     e.preventDefault();
     $('hrMoveResult').textContent='';
 
     try{
+      const validation=await validateMovement();
+
       const type=$('moveType').value;
       const email=$('personEmail').value.trim().toLowerCase();
       const name=$('personName').value.trim();
       const surname=$('personSurname').value.trim();
 
-      if(email && !email.endsWith('@archea.it')){
-        throw new Error('Se inserita, la mail deve essere aziendale @archea.it.');
-      }
+      const currentSite=$('currentSite')?.value.trim()||'';
+      const newSite=$('newSite')?.value.trim()||'';
+      const currentDesk=$('currentDesk')?.value.trim()||'';
+      const newDesk=$('newDesk')?.value.trim()||'';
 
       const payload={
         movement_type:type,
@@ -958,51 +1194,29 @@ async function hrNewMovement(){
         person_name:name,
         person_surname:surname,
         person_email:email||null,
-        current_site:$('currentSite').value.trim()||null,
-        new_site:$('newSite').value.trim()||null,
-        current_desk:$('currentDesk').value.trim()||null,
-        new_desk:$('newDesk').value.trim()||null,
+        current_site:currentSite||null,
+        new_site:newSite||null,
+        current_desk:currentDesk||null,
+        new_desk:newDesk||null,
         notes:$('moveNotes').value.trim()||null,
         created_by:user.id,
         created_by_email:user.email,
         created_by_name:profile.nome,
-        status:'DA VERIFICARE'
+        status:'DA VERIFICARE',
+        person_state_before:validation.state,
+        needs_manual_check:validation.needsManualCheck
       };
 
-      const checkParams = new URLSearchParams();
-      checkParams.set('select','id,movement_type,movement_date,person_email,person_name,person_surname,status');
-      if(email) checkParams.set('person_email','eq.'+email);
-
-      let possible=[];
-      if(email){
-        possible=await select('hr_movements',checkParams.toString());
-      }else{
-        possible=await select('hr_movements',
-          `select=id,movement_type,movement_date,person_email,person_name,person_surname,status&person_name=ilike.${encodeURIComponent(name)}&person_surname=ilike.${encodeURIComponent(surname)}`
-        );
-      }
-
-      let duplicate=false;
-      if(type==='NUOVO INGRESSO'){
-        duplicate=possible.some(x=>x.movement_type==='NUOVO INGRESSO'&&x.status!=='ANNULLATO');
-      }else if(type==='USCITA'){
-        duplicate=possible.some(x=>x.movement_type==='USCITA'&&x.status!=='ANNULLATO');
-      }else{
-        duplicate=possible.some(x=>x.movement_type===type&&x.movement_date===$('moveDate').value&&x.status!=='ANNULLATO');
-      }
-
-      if(duplicate){
-        throw new Error('Possibile duplicato rilevato. Il movimento non è stato creato: verifica prima lo storico.');
-      }
-
-      const ticketDesc = [
+      const ticketDesc=[
         `Movimento: ${type}`,
         `Persona: ${name} ${surname}`,
         email?`Email: ${email}`:'',
-        $('currentSite').value?`Sede attuale: ${$('currentSite').value.trim()}`:'',
-        $('newSite').value?`Nuova sede: ${$('newSite').value.trim()}`:'',
-        $('currentDesk').value?`Postazione attuale: ${$('currentDesk').value.trim()}`:'',
-        $('newDesk').value?`Nuova postazione: ${$('newDesk').value.trim()}`:'',
+        currentSite?`Sede attuale: ${currentSite}`:'',
+        newSite?`Nuova sede: ${newSite}`:'',
+        currentDesk?`Postazione attuale: ${currentDesk}`:'',
+        newDesk?`Nuova postazione: ${newDesk}`:'',
+        `Stato precedente rilevato: ${validation.state}`,
+        validation.needsManualCheck?'ATTENZIONE: storico precedente non disponibile, verifica manuale richiesta.':'',
         $('moveNotes').value?`Note: ${$('moveNotes').value.trim()}`:''
       ].filter(Boolean).join('\n');
 
@@ -1011,21 +1225,20 @@ async function hrNewMovement(){
         oggetto:`${type} - ${name} ${surname}`,
         descrizione:ticketDesc,
         stato:'APERTO',
-        priorita:'NORMALE',
+        priorita:type==='USCITA'?'ALTA':'NORMALE',
         richiedente_nome:profile.nome,
         richiedente_email:user.email,
         created_by:user.id,
         created_by_name:profile.nome,
         origine:'HR',
-        sede:$('newSite').value.trim()||$('currentSite').value.trim()||null
+        sede:newSite||currentSite||null
       });
 
       const ticket=trows[0];
       const ticketNo=`MOV-${new Date().getFullYear()}-${String(ticket.id).padStart(5,'0')}`;
       await update('tickets',`id=eq.${ticket.id}`,{numero_ticket:ticketNo});
 
-      const mrows=await insert('hr_movements',{...payload,ticket_id:ticket.id},true);
-      const movement=mrows[0];
+      await insert('hr_movements',{...payload,ticket_id:ticket.id},true);
 
       await insert('ticket_history',{
         ticket_id:ticket.id,
@@ -1039,12 +1252,21 @@ async function hrNewMovement(){
 
       $('hrMoveForm').reset();
       $('moveDate').value=new Date().toISOString().slice(0,10);
-      $('hrMoveResult').innerHTML=`Movimento registrato. Ticket <b>${ticketNo}</b>. Stato HR: <b>DA VERIFICARE</b>.`;
+      configureForm();
+
+      $('hrMoveResult').innerHTML=`
+        <div class="movement-success">
+          <b>Movimento registrato</b>
+          <span>Ticket ${esc(ticketNo)} · Stato HR: DA VERIFICARE</span>
+          ${validation.needsManualCheck?'<small>Richiede controllo manuale dello storico precedente.</small>':''}
+        </div>`;
       toast('Movimento HR creato');
     }catch(err){
-      $('hrMoveResult').textContent=err.message;
+      $('hrMoveResult').innerHTML=`<div class="movement-error">${esc(err.message)}</div>`;
     }
   };
+
+  configureForm();
 }
 
 async function hrHistory(){
@@ -1085,13 +1307,16 @@ async function hrHistory(){
 
     $('hrHistoryTable').innerHTML=filtered.length?`
       <div class="tablewrap"><table>
-        <thead><tr><th>Data</th><th>Tipo</th><th>Persona</th><th>Sede</th><th>Postazione</th><th>Ticket</th><th>Stato HR</th></tr></thead>
+        <thead><tr><th>Data</th><th>Tipo</th><th>Persona</th><th>Sede</th><th>Postazione</th><th>Controllo</th><th>Ticket</th><th>Stato HR</th></tr></thead>
         <tbody>${filtered.map(x=>`<tr>
           <td>${dateOnly(x.movement_date)}</td>
           <td><b>${esc(x.movement_type)}</b></td>
           <td>${esc(`${x.person_name} ${x.person_surname}`)}<small class="subline">${esc(x.person_email||'')}</small></td>
           <td>${esc(x.current_site||'—')} ${x.new_site?`→ ${esc(x.new_site)}`:''}</td>
           <td>${esc(x.current_desk||'—')} ${x.new_desk?`→ ${esc(x.new_desk)}`:''}</td>
+          <td>${x.needs_manual_check
+            ?`<span class="badge movement-check-warn">MANUALE</span>`
+            :`<span class="badge movement-check-ok">${esc(x.person_state_before||'OK')}</span>`}</td>
           <td>${x.ticket_id?`<b class="ticket-link" data-open="${x.ticket_id}">${esc(x.tickets?.numero_ticket||'')}</b>`:'—'}</td>
           <td>${isITRole()?`<select data-hr-status="${x.id}">
             <option ${x.status==='DA VERIFICARE'?'selected':''}>DA VERIFICARE</option>
