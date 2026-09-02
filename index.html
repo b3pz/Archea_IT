@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#181b18">
 <title>Archea Service Desk</title>
 <link rel="stylesheet" href="styles.css">
 </head>
@@ -10,28 +11,72 @@
 <div id="toast" class="toast hidden"></div>
 
 <section id="login" class="login">
-  <div class="login-wrap">
-    <img src="logo_archea.png" class="login-logo" alt="Archea Associati">
-    <div class="login-card">
-      <h1>Service Desk</h1>
-      <p>Portale interno IT</p>
-      <form id="loginForm">
-        <label>Email<input id="email" type="email" autocomplete="username" required></label>
-        <label>Password<input id="password" type="password" autocomplete="current-password" required></label>
-        <button type="submit" class="primary">Accedi</button>
-      </form>
-      <div id="loginErr" class="err"></div>
-    </div>
+  <div class="login-shell">
+    <section class="login-identity">
+      <div class="login-brand">
+        <img src="logo_archea.png" class="login-logo" alt="Archea Associati">
+      </div>
+
+      <div class="login-copy">
+        <span class="eyebrow">ARCHEA DIGITAL SERVICES</span>
+        <h1>Service Desk</h1>
+        <p>Un unico punto di accesso per supporto, richieste e servizi del Dipartimento IT.</p>
+      </div>
+
+      <div class="login-meta">
+        <span>Portale interno</span>
+        <span>Supporto IT</span>
+        <span>Archea Associati</span>
+      </div>
+    </section>
+
+    <section class="login-access">
+      <div class="login-card">
+        <div class="login-card-head">
+          <span class="section-index">01</span>
+          <div>
+            <h2>Accesso</h2>
+            <p>Utilizza le credenziali abilitate al Service Desk.</p>
+          </div>
+        </div>
+
+        <form id="loginForm">
+          <label>Email
+            <input id="email" type="email" autocomplete="username" required placeholder="nome.cognome@archea.it">
+          </label>
+          <label>Password
+            <input id="password" type="password" autocomplete="current-password" required placeholder="••••••••">
+          </label>
+          <button type="submit" class="primary login-submit">Accedi al portale</button>
+        </form>
+
+        <div id="loginErr" class="err"></div>
+
+        <div class="login-security">
+          Accesso riservato agli utenti autorizzati.
+        </div>
+      </div>
+
+      <footer class="login-footer">
+        <strong>Sviluppato dal Dipartimento IT</strong>
+        <span>Archea Associati · Uso interno aziendale</span>
+      </footer>
+    </section>
   </div>
 </section>
 
 <section id="app" class="app hidden">
   <aside class="sidebar">
-    <div>
+    <div class="sidebar-top">
       <div class="brand">
         <img src="logo_archea.png" alt="Archea Associati">
-        <span>Service Desk</span>
+        <div class="brand-copy">
+          <strong>Service Desk</strong>
+          <span>Digital Services</span>
+        </div>
       </div>
+
+      <div class="nav-section-label">NAVIGAZIONE</div>
 
       <nav id="userNav" class="hidden">
         <button data-view="new">Apri ticket</button>
@@ -57,28 +102,50 @@
       </nav>
     </div>
 
-    <div class="account">
-      <b id="who"></b>
-      <span id="role"></span>
-      <button id="logout" class="ghost">Esci</button>
+    <div class="sidebar-bottom">
+      <div class="service-mark">
+        <span>ARCHEA</span>
+        <small>IT SERVICE DESK</small>
+      </div>
+
+      <div class="account">
+        <div class="account-user">
+          <span class="account-dot"></span>
+          <div>
+            <b id="who"></b>
+            <span id="role"></span>
+          </div>
+        </div>
+        <button id="logout" class="ghost">Esci</button>
+      </div>
     </div>
   </aside>
 
   <main>
+    <div class="workspace-topline">
+      <span>ARCHEA ASSOCIATI</span>
+      <span>INTERNAL DIGITAL PLATFORM</span>
+    </div>
+
     <header class="topbar">
-      <div>
+      <div class="page-heading">
+        <span class="eyebrow">SERVICE DESK</span>
         <h2 id="title"></h2>
         <p id="subtitle"></p>
       </div>
 
       <div class="notification-wrap">
-        <button id="bellBtn" class="bell" aria-label="Notifiche">
-          <span class="bell-icon">●</span>
+        <button id="bellBtn" class="bell" aria-label="Notifiche" title="Notifiche">
+          <span class="bell-shape"></span>
           <span id="bellCount" class="bell-count hidden">0</span>
         </button>
+
         <div id="notificationPanel" class="notification-panel hidden">
           <div class="notification-head">
-            <strong>Notifiche</strong>
+            <div>
+              <span class="eyebrow">SERVICE DESK</span>
+              <strong>Notifiche</strong>
+            </div>
             <button id="markAllRead" class="text-btn">Segna tutte lette</button>
           </div>
           <div id="notificationList"></div>
@@ -87,6 +154,11 @@
     </header>
 
     <div id="content"></div>
+
+    <footer class="app-footer">
+      <span>Archea Service Desk</span>
+      <span>Sviluppato dal Dipartimento IT · Archea Associati</span>
+    </footer>
   </main>
 </section>
 
