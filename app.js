@@ -231,6 +231,34 @@ function verifyBadge(s){
   return `<span class="badge ${cls}">${esc(s||'DA VERIFICARE')}</span>`;
 }
 
+function assetTypeBadge(a){
+  return a?.is_label_only
+    ? '<span class="badge asset-label-free">ETICHETTA LIBERA</span>'
+    : assetStatusBadge(a?.status);
+}
+function normSearch(s){
+  return String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim();
+}
+function assetSearchNeedles(q){
+  const n=normSearch(q);
+  const aliases={
+    'laptop':['laptop','portatile','notebook','macbook'],
+    'portatile':['laptop','portatile','notebook','macbook'],
+    'notebook':['laptop','portatile','notebook','macbook'],
+    'pc':['pc fisso','workstation','desktop'],
+    'desktop':['pc fisso','workstation','desktop'],
+    'telefono':['telefono','smartphone','iphone','android'],
+    'tablet':['tablet','ipad'],
+    'schermo':['monitor','display','schermo']
+  };
+  return aliases[n]||[n];
+}
+function matchesAssetSearch(a,q){
+  if(!q)return true;
+  const hay=normSearch(`${a.asset_code||''} ${a.category||''} ${a.brand||''} ${a.model||''} ${a.serial_number||''} ${a.site||''} ${a.position||''} ${a.assigned_user_name||''} ${a.assigned_user_email||''}`);
+  return assetSearchNeedles(q).some(n=>hay.includes(n));
+}
+
 function relTime(d){
   if(!d)return '—';
   const s=Math.max(0,Math.floor((Date.now()-new Date(d).getTime())/1000));
@@ -641,7 +669,7 @@ async function bookingDetail(id){
   if(!rows.length)return;
   const b=rows[0];
 
-  const assets=await select('assets','select=id,asset_code,category,brand,model,serial_number,status,site,verification_status&status=in.(DISPONIBILE,PRENOTATO,IN PRESTITO,DA VERIFICARE)&order=asset_code.asc');
+  const assets=await select('assets','select=id,asset_code,category,brand,model,serial_number,status,site,verification_status,is_label_only&is_label_only=eq.false&status=in.(DISPONIBILE,PRENOTATO,IN PRESTITO,DA VERIFICARE)&order=asset_code.asc');
   const currentAsset=b.asset_id?assets.find(a=>a.id===b.asset_id):null;
 
   page('Prenotazione materiale',b.tickets?.numero_ticket||'');
@@ -1163,22 +1191,25 @@ async function census(){
   const rows=await select('assets','select=*&order=asset_code.asc');
   let q='',site='',status='',verification='';
 
-  const sites=[...new Set(rows.map(x=>x.site).filter(Boolean))].sort();
+  const realAssets=rows.filter(x=>!x.is_label_only);
+  const labelOnly=rows.filter(x=>x.is_label_only);
+  const sites=[...new Set(realAssets.map(x=>x.site).filter(Boolean))].sort();
 
   $('content').innerHTML=`
-    <div class="metrics">
-      <div class="metric"><span>Asset totali</span><b>${rows.length}</b></div>
-      <div class="metric"><span>Verificati</span><b>${rows.filter(x=>x.verification_status==='VERIFICATO').length}</b></div>
-      <div class="metric"><span>Da verificare</span><b>${rows.filter(x=>x.verification_status!=='VERIFICATO').length}</b></div>
-      <div class="metric"><span>Disponibili</span><b>${rows.filter(x=>x.status==='DISPONIBILE').length}</b></div>
+    <div class="metrics asset-main-metrics">
+      <div class="metric"><span>Asset censiti</span><b>${realAssets.length}</b></div>
+      <div class="metric"><span>Assegnati</span><b>${realAssets.filter(x=>x.status==='ASSEGNATO'||x.assigned_user_name||x.assigned_user_email).length}</b></div>
+      <div class="metric"><span>Disponibili</span><b>${realAssets.filter(x=>x.status==='DISPONIBILE').length}</b></div>
+      <div class="metric"><span>Etichette libere</span><b>${labelOnly.length}</b></div>
     </div>
 
     <div class="panel">
       <div class="asset-toolbar">
-        <input id="assetSearch" placeholder="Cerca codice, seriale, modello, utente...">
+        <input id="assetSearch" placeholder="Cerca: laptop, Dell, Milano, A0345, Mario Rossi...">
         <select id="assetSite"><option value="">Tutte le sedi</option>${sites.map(s=>`<option>${esc(s)}</option>`).join('')}</select>
         <select id="assetStatus">
           <option value="">Tutti gli stati</option>
+          <option value="ETICHETTA LIBERA">ETICHETTA LIBERA</option>
           <option>DISPONIBILE</option><option>ASSEGNATO</option><option>PRENOTATO</option><option>IN PRESTITO</option>
           <option>IN MANUTENZIONE</option><option>GUASTO</option><option>DISMESSO</option><option>VENDUTO</option><option>DA VERIFICARE</option>
         </select>
@@ -1188,50 +1219,63 @@ async function census(){
         </select>
       </div>
 
+      <div class="asset-search-summary" id="assetSearchSummary"></div>
+
       <div class="button-row asset-actions">
-        <button id="newAsset" class="primary">+ Nuovo asset</button>
-        ${isSuperIT()?'<button id="importAssets" class="secondary">Importa censimento Excel</button>':''}
+        <button id="newAsset" class="primary">+ Associa etichetta a dispositivo</button>
+        ${isSuperIT()?'<button id="importAssets" class="secondary">Importa foglio Device</button>':''}
       </div>
 
       <div id="assetTable"></div>
     </div>
 
     ${isSuperIT()?`<div id="importPanel" class="panel hidden">
-      <h3>Importazione censimento Excel</h3>
-      <p class="muted-line">Il file viene letto dalla Edge Function e non viene archiviato. Le password, PIN e PUK presenti nel foglio non vengono importati.</p>
-      <label>File .xlsx<input id="assetFile" type="file" accept=".xlsx,.xls"></label>
+      <h3>Importazione foglio Device</h3>
+      <p class="muted-line">Viene letto esclusivamente il foglio <b>Device</b>. Tutti gli altri fogli Excel vengono ignorati.</p>
+      <label>File censimento .xlsx<input id="assetFile" type="file" accept=".xlsx,.xls"></label>
       <div class="info-box">
-        Tutti i dati importati partono come <b>DA VERIFICARE</b>. Un asset già verificato nel portale non viene sovrascritto da una nuova importazione legacy.
+        <b>Regola etichette:</b> se una riga contiene solo il codice e tutte le celle successive sono vuote, il codice viene registrato come <b>ETICHETTA LIBERA</b>. Se dopo il codice esiste già almeno un valore, il codice è considerato già associato a un dispositivo.<br><br>
+        Password, PIN e PUK non vengono importati. Gli asset già <b>VERIFICATI</b> non vengono sovrascritti.
       </div>
-      <button id="runAssetImport" class="primary">Avvia importazione</button>
+      <button id="runAssetImport" class="primary">Importa Device</button>
       <p id="assetImportResult"></p>
     </div>`:''}`;
 
   const render=()=>{
     const filtered=rows.filter(x=>{
       if(site&&x.site!==site)return false;
-      if(status&&x.status!==status)return false;
+      if(status==='ETICHETTA LIBERA'&&!x.is_label_only)return false;
+      if(status&&status!=='ETICHETTA LIBERA'&&(x.is_label_only||x.status!==status))return false;
       if(verification&&x.verification_status!==verification)return false;
-      if(q){
-        const h=`${x.asset_code||''} ${x.category||''} ${x.brand||''} ${x.model||''} ${x.serial_number||''} ${x.site||''} ${x.position||''} ${x.assigned_user_name||''} ${x.assigned_user_email||''}`.toLowerCase();
-        if(!h.includes(q.toLowerCase()))return false;
-      }
+      if(q&&!matchesAssetSearch(x,q))return false;
       return true;
     });
+
+    const filteredAssets=filtered.filter(x=>!x.is_label_only);
+    const assigned=filteredAssets.filter(x=>x.status==='ASSEGNATO'||x.assigned_user_name||x.assigned_user_email).length;
+    const available=filteredAssets.filter(x=>x.status==='DISPONIBILE').length;
+    const freeLabels=filtered.filter(x=>x.is_label_only).length;
+
+    $('assetSearchSummary').innerHTML=`
+      <div><span>Risultati</span><b>${filtered.length}</b></div>
+      <div><span>Dispositivi</span><b>${filteredAssets.length}</b></div>
+      <div><span>Assegnati</span><b>${assigned}</b></div>
+      <div><span>Disponibili</span><b>${available}</b></div>
+      <div><span>Etichette libere</span><b>${freeLabels}</b></div>`;
 
     $('assetTable').innerHTML=filtered.length?`
       <div class="tablewrap"><table>
         <thead><tr><th>Codice</th><th>Categoria / Modello</th><th>Sede / Posizione</th><th>Assegnato a</th><th>Stato</th><th>Verifica</th><th>Ultima verifica</th></tr></thead>
-        <tbody>${filtered.map(a=>`<tr class="click" data-asset="${a.id}">
-          <td><b>${esc(a.asset_code)}</b><small class="subline">${esc(a.serial_number||'')}</small></td>
-          <td><b>${esc(a.category||'—')}</b><small class="subline">${esc([a.brand,a.model].filter(Boolean).join(' ')||'')}</small></td>
-          <td>${esc(a.site||'—')}<small class="subline">${esc(a.position||'')}</small></td>
-          <td>${esc(a.assigned_user_name||a.assigned_user_email||'—')}</td>
-          <td>${assetStatusBadge(a.status)}</td>
-          <td>${verifyBadge(a.verification_status)}</td>
-          <td>${a.verified_at?`${fmt(a.verified_at)}<small class="subline">${esc(a.verified_by||'')}</small>`:'—'}</td>
+        <tbody>${filtered.map(a=>`<tr class="click ${a.is_label_only?'label-only-row':''}" data-asset="${a.id}">
+          <td><b>${esc(a.asset_code)}</b><small class="subline">${a.is_label_only?'Codice predisposto':esc(a.serial_number||'')}</small></td>
+          <td><b>${a.is_label_only?'—':esc(a.category||'—')}</b><small class="subline">${a.is_label_only?'Etichetta non ancora applicata':esc([a.brand,a.model].filter(Boolean).join(' ')||'')}</small></td>
+          <td>${a.is_label_only?'—':esc(a.site||'—')}<small class="subline">${a.is_label_only?'':esc(a.position||'')}</small></td>
+          <td>${a.is_label_only?'—':esc(a.assigned_user_name||a.assigned_user_email||'—')}</td>
+          <td>${assetTypeBadge(a)}</td>
+          <td>${a.is_label_only?'—':verifyBadge(a.verification_status)}</td>
+          <td>${a.is_label_only?'—':(a.verified_at?`${fmt(a.verified_at)}<small class="subline">${esc(a.verified_by||'')}</small>`:'—')}</td>
         </tr>`).join('')}</tbody>
-      </table></div>`:'<div class="empty">Nessun asset trovato.</div>';
+      </table></div>`:'<div class="empty">Nessun risultato.</div>';
 
     document.querySelectorAll('[data-asset]').forEach(x=>x.onclick=()=>openSubView('asset-detail',()=>assetDetail(+x.dataset.asset)));
   };
@@ -1246,8 +1290,8 @@ async function census(){
 
   if($('runAssetImport'))$('runAssetImport').onclick=async()=>{
     const file=$('assetFile').files?.[0];
-    if(!file)return toast('Seleziona un file Excel');
-    $('assetImportResult').textContent='Importazione in corso...';
+    if(!file)return toast('Seleziona il file Excel del censimento');
+    $('assetImportResult').textContent='Lettura del foglio Device in corso...';
 
     try{
       const b64=await new Promise((resolve,reject)=>{
@@ -1262,9 +1306,19 @@ async function census(){
         body:{file_name:file.name,file_base64:b64}
       });
 
-      $('assetImportResult').innerHTML=`Importazione completata: <b>${res.inserted||0}</b> nuovi, <b>${res.updated||0}</b> aggiornati, <b>${res.skipped_verified||0}</b> già verificati non modificati, <b>${res.skipped_invalid||0}</b> righe ignorate.`;
-      toast('Censimento importato');
-      setTimeout(()=>census(),1200);
+      $('assetImportResult').innerHTML=`
+        <b>Foglio ${esc(res.sheet||'Device')} importato.</b><br>
+        Codici letti: <b>${res.rows_with_code||0}</b> ·
+        nuovi asset: <b>${res.inserted||0}</b> ·
+        asset aggiornati: <b>${res.updated||0}</b> ·
+        nuove etichette libere: <b>${res.label_only_inserted||0}</b> ·
+        etichette libere già note: <b>${res.label_only_existing||0}</b> ·
+        verificati protetti: <b>${res.skipped_verified||0}</b> ·
+        conflitti protetti: <b>${res.occupied_conflicts||0}</b> ·
+        duplicati nel file: <b>${res.duplicate_codes_in_file||0}</b> ·
+        righe ignorate: <b>${res.skipped_invalid||0}</b>.`;
+      toast('Foglio Device importato');
+      setTimeout(()=>census(),1500);
     }catch(err){
       $('assetImportResult').textContent=err.message;
     }
@@ -1279,7 +1333,7 @@ async function assetEdit(id){
   let a={
     asset_code:'',category:'',brand:'',model:'',serial_number:'',site:'',position:'',
     assigned_user_name:'',assigned_user_email:'',storage:'',gpu:'',ram:'',cpu:'',
-    notes:'',status:'DA VERIFICARE',verification_status:'DA VERIFICARE',account_identifier:''
+    notes:'',status:'DA VERIFICARE',verification_status:'DA VERIFICARE',account_identifier:'',is_label_only:false
   };
 
   if(id){
@@ -1288,13 +1342,24 @@ async function assetEdit(id){
     a=rows[0];
   }
 
-  page(id?'Modifica asset':'Nuovo asset',id?a.asset_code:'Inserimento manuale');
+  const categoryRows=await select('assets','select=category&is_label_only=eq.false&order=category.asc');
+  const defaultCategories=['Laptop / Portatile','MacBook','Workstation','PC fisso','iMac','Monitor','iPad / Tablet','Smartphone','Telefono','Stampante','Mouse','Tastiera','Cuffie','Webcam','Access Point','Switch','Firewall','Matterport','Drone','Accessorio','Altro'];
+  const categories=[...new Set([...defaultCategories,...categoryRows.map(x=>x.category).filter(Boolean)])].sort((x,y)=>x.localeCompare(y,'it'));
+  if(a.category&&!categories.includes(a.category))categories.unshift(a.category);
+
+  page(id?(a.is_label_only?'Associa etichetta':'Modifica asset'):'Nuovo asset',id?a.asset_code:'Seleziona un codice libero dal Device');
 
   $('content').innerHTML=`
     <div class="panel">
       <form id="assetForm" class="formgrid">
-        <label>Codice asset<input id="aCode" value="${esc(a.asset_code||'')}" required placeholder="A0345"></label>
-        <label>Categoria<input id="aCategory" value="${esc(a.category||'')}"></label>
+        <label>Codice asset
+          <input id="aCode" value="${esc(a.asset_code||'')}" required placeholder="A4689" ${id?'readonly':''} autocomplete="off">
+          <small id="codeCheck" class="code-check ${id&&a.is_label_only?'ok':''}">${id&&a.is_label_only?'Etichetta libera: completa i dati del dispositivo.':id?'Il codice identificativo non può essere modificato.':'Inserisci il codice riportato sull’etichetta fisica.'}</small>
+        </label>
+        <label>Categoria<select id="aCategory">
+          <option value="">Seleziona categoria...</option>
+          ${categories.map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join('')}
+        </select></label>
         <label>Marca<input id="aBrand" value="${esc(a.brand||'')}"></label>
         <label>Modello<input id="aModel" value="${esc(a.model||'')}"></label>
         <label>Seriale<input id="aSerial" value="${esc(a.serial_number||'')}"></label>
@@ -1316,19 +1381,71 @@ async function assetEdit(id){
         </select></label>
         <label class="full">Note <span class="optional">(facoltative)</span><textarea id="aNotes" rows="4">${esc(a.notes||'')}</textarea></label>
         <div class="full info-box">
-          Le password non devono essere inserite nel censimento. Il campo “Account associato” serve solo per indicare quale Apple ID / account Google è collegato al dispositivo.
+          Il codice deve corrispondere all'etichetta fisica. Per un nuovo dispositivo il portale accetta solo un codice importato dal foglio <b>Device</b> e riconosciuto come <b>ETICHETTA LIBERA</b>. Se il codice contiene già dati, il salvataggio viene bloccato per evitare doppioni.
         </div>
         <div class="full button-row">
-          <button class="primary">Salva asset</button>
-          ${id?'<button id="verifyAssetNow" type="button" class="secondary">Segna verificato ora</button>':''}
+          <button id="assetSave" class="primary" ${!id?'disabled':''}>${id&&a.is_label_only?'Associa dispositivo':'Salva asset'}</button>
+          ${id&&!a.is_label_only?'<button id="verifyAssetNow" type="button" class="secondary">Segna verificato ora</button>':''}
           <button id="backToCensus" type="button" class="ghost">Annulla</button>
         </div>
       </form>
     </div>`;
 
+  $('aCategory').value=a.category||'';
   $('aStatus').value=a.status||'DA VERIFICARE';
   $('aVerify').value=a.verification_status||'DA VERIFICARE';
   $('backToCensus').onclick=()=>census();
+
+  let reservedRow=id&&a.is_label_only?a:null;
+  let checkTimer=null;
+
+  const checkNewCode=async()=>{
+    if(id)return;
+    const code=$('aCode').value.trim().toUpperCase();
+    $('aCode').value=code;
+    const msg=$('codeCheck');
+    const saveBtn=$('assetSave');
+    reservedRow=null;
+    saveBtn.disabled=true;
+    msg.className='code-check';
+
+    if(!code){
+      msg.textContent='Inserisci il codice riportato sull’etichetta fisica.';
+      return;
+    }
+
+    msg.textContent='Controllo codice nel censimento...';
+    try{
+      const found=await select('assets',`select=*&asset_code=eq.${encodeURIComponent(code)}&limit=1`);
+      if(!found.length){
+        msg.className='code-check warn';
+        msg.textContent=`${code} non risulta nel foglio Device importato. Aggiorna/importa il censimento prima di usarlo.`;
+        return;
+      }
+      const x=found[0];
+      if(!x.is_label_only){
+        msg.className='code-check error';
+        const desc=[x.category,x.brand,x.model,x.serial_number,x.site,x.assigned_user_name].filter(Boolean).join(' · ');
+        msg.textContent=`${code} è già utilizzato${desc?`: ${desc}`:''}. Salvataggio bloccato per evitare un doppione.`;
+        return;
+      }
+      reservedRow=x;
+      msg.className='code-check ok';
+      msg.textContent=`${code} è un'etichetta libera. Puoi compilare i dati del dispositivo.`;
+      saveBtn.disabled=false;
+    }catch(err){
+      msg.className='code-check error';
+      msg.textContent=err.message;
+    }
+  };
+
+  if(!id){
+    $('aCode').oninput=()=>{
+      clearTimeout(checkTimer);
+      checkTimer=setTimeout(checkNewCode,350);
+    };
+    $('aCode').onblur=checkNewCode;
+  }
 
   if($('verifyAssetNow'))$('verifyAssetNow').onclick=async()=>{
     const before=a.verification_status;
@@ -1356,6 +1473,7 @@ async function assetEdit(id){
 
     const data={
       asset_code:$('aCode').value.trim().toUpperCase(),
+      is_label_only:false,
       category:$('aCategory').value.trim()||null,
       brand:$('aBrand').value.trim()||null,
       model:$('aModel').value.trim()||null,
@@ -1375,11 +1493,15 @@ async function assetEdit(id){
       updated_at:new Date().toISOString()
     };
 
-    if(data.assigned_user_email&&!data.assigned_user_email.endsWith('@archea.it')){
-      throw new Error('La mail assegnatario deve essere @archea.it.');
-    }
-
     try{
+      if(data.assigned_user_email&&!data.assigned_user_email.endsWith('@archea.it')){
+        throw new Error('La mail assegnatario deve essere @archea.it.');
+      }
+
+      // Evita di trasformare un'etichetta in "asset" senza aver inserito alcun dato.
+      const hasDeviceData=[data.category,data.brand,data.model,data.serial_number,data.site,data.position,data.assigned_user_name,data.assigned_user_email,data.storage,data.gpu,data.ram,data.cpu,data.notes].some(Boolean);
+      if(!hasDeviceData)throw new Error('Compila almeno un dato del dispositivo oltre al codice.');
+
       if(id){
         const tracked=[
           ['status',a.status,data.status],
@@ -1387,15 +1509,16 @@ async function assetEdit(id){
           ['site',a.site,data.site],
           ['position',a.position,data.position],
           ['assigned_user_name',a.assigned_user_name,data.assigned_user_name],
-          ['assigned_user_email',a.assigned_user_email,data.assigned_user_email]
+          ['assigned_user_email',a.assigned_user_email,data.assigned_user_email],
+          ['is_label_only',a.is_label_only,data.is_label_only]
         ];
 
         await update('assets',`id=eq.${id}`,data);
 
         for(const [field,oldv,newv] of tracked){
-          if((oldv||'')!==(newv||'')){
+          if(String(oldv??'')!==String(newv??'')){
             await insert('asset_history',{
-              asset_id:id,event_type:'MODIFICA',field_name:field,
+              asset_id:id,event_type:a.is_label_only?'ETICHETTA_ASSOCIATA':'MODIFICA',field_name:field,
               old_value:oldv==null?null:String(oldv),
               new_value:newv==null?null:String(newv),
               changed_by:currentITName(),changed_by_id:user.id
@@ -1407,22 +1530,26 @@ async function assetEdit(id){
           await update('assets',`id=eq.${id}`,{verified_by:currentITName(),verified_at:new Date().toISOString()});
         }
 
-        toast('Asset aggiornato');
+        toast(a.is_label_only?'Etichetta associata al dispositivo':'Asset aggiornato');
         assetDetail(id);
       }else{
-        const rows=await insert('assets',{
-          ...data,
-          created_by:user.id,
-          created_by_name:currentITName()
-        },true);
-        const created=rows[0];
+        // Ricontrollo immediatamente prima del salvataggio: il codice può essere
+        // stato usato da un altro tecnico dopo il controllo iniziale.
+        const live=await select('assets',`select=*&asset_code=eq.${encodeURIComponent(data.asset_code)}&limit=1`);
+        if(!live.length)throw new Error('Codice non presente nel foglio Device importato.');
+        if(!live[0].is_label_only)throw new Error(`Il codice ${data.asset_code} è già stato utilizzato.`);
+
+        const target=live[0];
+        await update('assets',`id=eq.${target.id}`,data);
         await insert('asset_history',{
-          asset_id:created.id,event_type:'CREAZIONE',
-          new_value:'Asset creato manualmente',
+          asset_id:target.id,
+          event_type:'ETICHETTA_ASSOCIATA',
+          old_value:'ETICHETTA LIBERA',
+          new_value:[data.category,data.brand,data.model].filter(Boolean).join(' ')||'Dispositivo associato',
           changed_by:currentITName(),changed_by_id:user.id
         },false);
-        toast('Asset creato');
-        assetDetail(created.id);
+        toast('Etichetta associata al dispositivo');
+        assetDetail(target.id);
       }
     }catch(err){
       toast(err.message);
@@ -1448,7 +1575,7 @@ async function assetDetail(id){
           <h3>${esc([a.brand,a.model].filter(Boolean).join(' ')||a.category||'Asset')}</h3>
           <p class="muted-line">${esc(a.category||'')} ${a.serial_number?`• S/N ${esc(a.serial_number)}`:''}</p>
         </div>
-        <div class="asset-badges">${assetStatusBadge(a.status)} ${verifyBadge(a.verification_status)}</div>
+        <div class="asset-badges">${assetTypeBadge(a)} ${a.is_label_only?'':verifyBadge(a.verification_status)}</div>
       </div>
 
       <div class="asset-info-grid">
@@ -1467,8 +1594,8 @@ async function assetDetail(id){
       ${a.verified_at?`<p class="verified-line">Verificato da <b>${esc(a.verified_by||'IT')}</b> il ${fmt(a.verified_at)}</p>`:''}
 
       <div class="button-row">
-        <button id="editAsset" class="primary">Modifica asset</button>
-        ${a.verification_status!=='VERIFICATO'?'<button id="quickVerify" class="secondary">Verifica ora</button>':''}
+        <button id="editAsset" class="primary">${a.is_label_only?'Associa dispositivo':'Modifica asset'}</button>
+        ${!a.is_label_only&&a.verification_status!=='VERIFICATO'?'<button id="quickVerify" class="secondary">Verifica ora</button>':''}
         <button id="backCensus" class="ghost">Torna al censimento</button>
       </div>
     </div>
