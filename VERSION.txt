@@ -1,4 +1,1 @@
-ARCHEA SERVICE DESK
-Versione: V6.0.3 - Correction / Movement + Delete Approval
-Data release: 2026-09-03
-Base: V5.4 -> V5.5 -> V6.0 -> V6.0.2 -> V6.0.3
+V6.0.4

@@ -38,6 +38,88 @@ function goBack(){
 }
 const $=i=>document.getElementById(i);
 const esc=s=>(s||'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
+
+function enhanceSelect(id,{placeholder='Seleziona…',searchPlaceholder='Cerca…',searchThreshold=7}={}){
+  const select=$(id);
+  if(!select||select.dataset.smartSelect==='1')return;
+  select.dataset.smartSelect='1';
+  select.classList.add('native-select-hidden');
+
+  const wrap=document.createElement('div');
+  wrap.className='smart-select';
+  select.parentNode.insertBefore(wrap,select);
+  wrap.appendChild(select);
+
+  const trigger=document.createElement('button');
+  trigger.type='button';
+  trigger.className='smart-select-trigger';
+  trigger.setAttribute('aria-haspopup','listbox');
+  trigger.setAttribute('aria-expanded','false');
+  wrap.appendChild(trigger);
+
+  const menu=document.createElement('div');
+  menu.className='smart-select-menu hidden';
+  wrap.appendChild(menu);
+
+  const options=[...select.options];
+  let search=null;
+  if(options.filter(o=>o.value).length>=searchThreshold){
+    const searchWrap=document.createElement('div');
+    searchWrap.className='smart-select-search-wrap';
+    search=document.createElement('input');
+    search.type='search';
+    search.className='smart-select-search';
+    search.placeholder=searchPlaceholder;
+    search.autocomplete='off';
+    searchWrap.appendChild(search);
+    menu.appendChild(searchWrap);
+  }
+
+  const list=document.createElement('div');
+  list.className='smart-select-list';
+  list.setAttribute('role','listbox');
+  menu.appendChild(list);
+
+  const labelFor=o=>o.value?(o.textContent||o.value):'— Nessuna selezione';
+  options.forEach(o=>{
+    const item=document.createElement('button');
+    item.type='button';
+    item.className='smart-select-option';
+    item.dataset.value=o.value;
+    item.dataset.search=(o.textContent||'').toLowerCase();
+    item.setAttribute('role','option');
+    item.innerHTML=`<span>${esc(labelFor(o))}</span><span class="smart-select-check">✓</span>`;
+    item.onclick=()=>{
+      select.value=o.value;
+      select.dispatchEvent(new Event('change',{bubbles:true}));
+      sync();close();
+    };
+    list.appendChild(item);
+  });
+
+  const sync=()=>{
+    const selected=select.options[select.selectedIndex];
+    const hasValue=!!selected?.value;
+    trigger.innerHTML=`<span class="smart-select-value ${hasValue?'':'is-placeholder'}">${esc(hasValue?(selected.textContent||selected.value):placeholder)}</span><span class="smart-select-chevron">⌄</span>`;
+    [...list.children].forEach(el=>{
+      const active=el.dataset.value===select.value;
+      el.classList.toggle('selected',active);
+      el.setAttribute('aria-selected',active?'true':'false');
+    });
+  };
+  const close=()=>{menu.classList.add('hidden');trigger.setAttribute('aria-expanded','false');wrap.classList.remove('open')};
+  const open=()=>{
+    document.querySelectorAll('.smart-select.open').forEach(x=>{if(x!==wrap)x.querySelector('.smart-select-menu')?.classList.add('hidden');x.classList.remove('open');x.querySelector('.smart-select-trigger')?.setAttribute('aria-expanded','false')});
+    menu.classList.remove('hidden');trigger.setAttribute('aria-expanded','true');wrap.classList.add('open');
+    if(search){search.value='';[...list.children].forEach(el=>el.classList.remove('filtered-out'));setTimeout(()=>search.focus(),0)}
+  };
+  trigger.onclick=()=>wrap.classList.contains('open')?close():open();
+  select.addEventListener('change',sync);
+  if(search)search.oninput=()=>{const q=search.value.trim().toLowerCase();[...list.children].forEach(el=>el.classList.toggle('filtered-out',q&&!el.dataset.search.includes(q)))};
+  wrap.addEventListener('keydown',e=>{if(e.key==='Escape'){close();trigger.focus()}});
+  document.addEventListener('click',e=>{if(!wrap.contains(e.target))close()});
+  sync();
+}
 const fmt=d=>d?new Intl.DateTimeFormat('it-IT',{dateStyle:'short',timeStyle:'short'}).format(new Date(d)):'—';
 const num=id=>`TKT-${new Date().getFullYear()}-${String(id).padStart(5,'0')}`;
 const badge=s=>`<span class="badge ${s==='APERTO'?'open':s==='IN LAVORAZIONE'?'working':s==='CHIUSO'?'closed':''}">${esc(s)}</span>`;
@@ -1418,7 +1500,7 @@ async function hrHistory(){
         <select id="hrSite"><option value="">Tutte le sedi</option>${sites.map(s=>`<option>${esc(s)}</option>`).join('')}</select>
         <select id="hrStatus"><option value="">Tutti gli stati</option>${statuses.map(s=>`<option>${esc(s)}</option>`).join('')}</select>
       </div>
-      <div class="info-box compact-info">Lo storico importato dall'Excel HR conserva il valore originale. I movimenti del portale restano separati e modificabili secondo i permessi.</div>
+      <div class="info-box compact-info">${rows.some(x=>x._source==='HR EXCEL')?"Lo storico importato dall'Excel HR conserva il valore originale. I movimenti del portale restano separati e modificabili secondo i permessi.":"<b>Storico HR non ancora importato.</b> In questo momento la sezione mostra solo eventuali movimenti creati dal portale. Dopo l’import di HR_Collaboratori.xlsx comparirà anche lo storico Excel."}</div>
       <div id="hrHistoryTable"></div>
     </div>`;
 
@@ -1734,6 +1816,8 @@ async function personDetail(id){
   ]);
   if(!pr.length)return people();const p=pr[0];
   const deviceNames=new Set(sources.filter(s=>s.source_type==='DEVICE'&&s.name_raw).map(s=>normSearch(s.name_raw)));
+  const pdfRoles=[...new Set(sources.filter(s=>s.source_type==='PDF_CHI_SIAMO'&&s.role_raw).map(s=>s.role_raw))];
+  const pdfFunctions=[...new Set(sources.filter(s=>s.source_type==='PDF_CHI_SIAMO'&&['HEAD OF STUDIO','TECHNICAL DIRECTOR','PERSONAL ASSISTANTS'].includes(s.department_raw)).map(s=>s.department_raw))];
   const linked=allAssets.filter(a=>a.assigned_person_id===id);
   const candidates=allAssets.filter(a=>!a.assigned_person_id&&a.assigned_user_name&&deviceNames.has(normSearch(a.assigned_user_name)));
   const histAssignments=assignments.filter(a=>a.assignment_status==='CHIUSA');
@@ -1744,7 +1828,8 @@ async function personDetail(id){
       <div class="person-head"><div><span class="eyebrow">PERSONA</span><h3>${esc(p.display_name)}</h3><div class="source-chips">${[...new Set(sources.map(x=>x.source_type))].map(sourceBadge).join('')}</div></div><div class="asset-badges">${personStatusBadge(p.current_status)} ${personVerifyBadge(p.verification_status)}</div></div>
       <div class="person-info-grid">
         <div><span>Società</span><b>${esc(p.company||'—')}</b></div><div><span>Sede</span><b>${esc(p.site||'—')}</b></div>
-        <div><span>Dipartimento</span><b>${esc(p.department||'—')}</b></div><div><span>Profilo</span><b>${esc(p.profile||'—')}</b></div>
+        <div><span>Dipartimento</span><b>${esc(p.department||'—')}</b></div><div><span>Profilo operativo</span><b>${esc(p.profile||'—')}</b></div>
+        <div><span>Ruolo PDF</span><b>${esc(pdfRoles.join(' / ')||'—')}</b></div><div><span>Funzione / sezione PDF</span><b>${esc(pdfFunctions.join(' / ')||'—')}</b></div>
         <div><span>Email</span><b>${esc(p.corporate_email||'—')}</b></div><div><span>Uscita</span><b>${p.exit_date?dateOnly(p.exit_date):'—'}</b></div>
       </div>
       ${p.notes?`<div class="info-box"><b>Note:</b> ${esc(p.notes)}</div>`:''}
@@ -1768,7 +1853,7 @@ async function personDetail(id){
       <div class="person-assets-list">
         ${linked.map(a=>assetPersonRow(a,true)).join('')}
         ${candidates.map(a=>assetPersonRow(a,false)).join('')}
-        ${!linked.length&&!candidates.length?'<div class="empty">Nessun asset corrente o legacy collegabile trovato.</div>':''}
+        ${!linked.length&&!candidates.length?'<div class="empty"><b>Nessun asset collegato.</b><br><span>È normale finché il foglio Device non viene importato. Dopo l’import, qui compariranno gli asset legacy riconducibili alla persona e quelli già verificati.</span></div>':''}
       </div>
     </div>
 
@@ -1827,11 +1912,15 @@ async function personEdit(id){
     <label>Nome<input id="peFirst" value="${esc(p.first_name||'')}"></label><label>Cognome<input id="peSurname" value="${esc(p.surname||'')}"></label>
     <label>Nome visualizzato<input id="peDisplay" value="${esc(p.display_name||'')}" required></label><label>Email aziendale<input id="peEmail" type="email" value="${esc(p.corporate_email||'')}"></label>
     <label>Società<select id="peCompany">${refOptions('COMPANY',p.company)}</select></label><label>Sede<select id="peSite">${refOptions('SITE',p.site)}</select></label>
-    <label>Dipartimento<select id="peDepartment">${refOptions('DEPARTMENT',p.department)}</select></label><label>Profilo<select id="peProfile">${refOptions('PROFILE',p.profile)}</select></label>
+    <label>Dipartimento<select id="peDepartment">${refOptions('DEPARTMENT',p.department)}</select></label><label>Profilo operativo<select id="peProfile">${refOptions('PROFILE',p.profile)}</select></label>
     <label class="full">Note<textarea id="peNotes" rows="4">${esc(p.notes||'')}</textarea></label>
     <label class="full">Motivo della correzione<input id="peReason" required placeholder="Es. sede inserita erroneamente durante il censimento"></label>
     <div class="button-row full"><button class="primary">Salva correzione</button><button id="cancelPersonEdit" type="button" class="ghost">Annulla</button></div>
   </form></div>`;
+  enhanceSelect('peCompany',{placeholder:'Seleziona società',searchPlaceholder:'Cerca società…'});
+  enhanceSelect('peSite',{placeholder:'Seleziona sede',searchPlaceholder:'Cerca sede…'});
+  enhanceSelect('peDepartment',{placeholder:'Seleziona dipartimento',searchPlaceholder:'Cerca dipartimento…'});
+  enhanceSelect('peProfile',{placeholder:'Seleziona profilo',searchPlaceholder:'Cerca profilo…'});
   $('cancelPersonEdit').onclick=()=>personDetail(id);
   $('personEditForm').onsubmit=async e=>{e.preventDefault();try{
     const display=$('peDisplay').value.trim();if(!display)throw new Error('Nome visualizzato obbligatorio');
@@ -1859,6 +1948,7 @@ async function census(){
 
   const realAssets=rows.filter(x=>!x.is_label_only);
   const labelOnly=rows.filter(x=>x.is_label_only);
+  const hasDeviceImport=rows.some(x=>normSearch(x.source_sheet)==='device');
   const sites=[...new Set(realAssets.map(x=>x.site).filter(Boolean))].sort();
 
   $('content').innerHTML=`
@@ -1871,6 +1961,7 @@ async function census(){
     </div>
 
     <div class="panel">
+      ${!hasDeviceImport?'<div class="info-box"><b>Foglio Device non ancora importato.</b><br>Il censimento non è vuoto per errore: al momento contiene solo eventuali record manuali/test. Usa <b>Importa foglio Device</b> per caricare il censimento reale.</div>':''}
       <div class="asset-toolbar">
         <input id="assetSearch" placeholder="Cerca: laptop, Dell, Milano, A0345, Mario Rossi...">
         <select id="assetSite"><option value="">Tutte le sedi</option>${sites.map(s=>`<option>${esc(s)}</option>`).join('')}</select>
