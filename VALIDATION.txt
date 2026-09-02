@@ -1,0 +1,16 @@
+ARCHEA SERVICE DESK V6.0.3 - VALIDATION
+
+Controlli release:
+- app.js: sintassi JavaScript verificata con node --check: OK
+- migrazione V6.0.3: blocchi $$ bilanciati: OK
+- migrazione V6.0.3: parentesi bilanciate: OK
+- frontend: nessuna chiamata diretta a v6_super_delete_person / v6_super_delete_asset: OK
+- eliminazione frontend: Richiedi eliminazione -> approvazione SUPER_IT: OK
+- persone: Correggi dati usa v6_correct_person_data e CORREZIONE_DATO: OK
+- asset: Correggi dati e Registra movimento separati: OK
+- asset movement: data effettiva + motivo + asset_assignments storico: OK
+- Telegram Edge Function invariata: nuovo ticket only
+- file sorgenti HR / Device / PDF / audit non inclusi nella release
+
+Nota: le migration non sono state eseguite sul database Supabase reale durante la generazione della ZIP.
+Eseguire i file SQL nell'ordine README e fermarsi in caso di errore.
