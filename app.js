@@ -5,6 +5,7 @@ let session=null,user=null,profile=null;
 let currentView=null;
 let previousView=null;
 let movementPrefill=null;
+let navigationEpoch=0;
 
 function applyTheme(theme){
   const chosen=theme==='dark'?'dark':'light';
@@ -24,6 +25,7 @@ function updateBackButton(){
   b.classList.toggle('hidden',!previousView);
 }
 function openSubView(kind,fn){
+  navigationEpoch++;
   if(currentView!==kind){
     previousView=currentView || (isITRole()?'home':'mine');
     currentView=kind;
@@ -427,7 +429,7 @@ function ageClass(d){
 
 
 
-async function userHome(){page('Service Desk','Apri una richiesta o controlla i tuoi ticket');const d=await select('tickets',`select=*&richiedente_email=eq.${encodeURIComponent(user.email)}&order=created_at.desc&limit=5`);$('content').innerHTML=`<div class="userhero"><h3>Come possiamo aiutarti?</h3><p>Puoi aprire ticket e vedere solo le tue richieste.</p><button id="openNow" class="primary">Apri un ticket</button></div><div class="panel"><h3>Le tue richieste recenti</h3>${table(d)}</div>`;$('openNow').onclick=()=>nav('new');wire()}
+async function userHome(){const epoch=navigationEpoch;page('Service Desk','Apri una richiesta o controlla i tuoi ticket');const d=await select('tickets',`select=*&richiedente_email=eq.${encodeURIComponent(user.email)}&order=created_at.desc&limit=5`);if(epoch!==navigationEpoch)return;$('content').innerHTML=`<div class="userhero"><h3>Come possiamo aiutarti?</h3><p>Puoi aprire ticket e vedere solo le tue richieste.</p><button id="openNow" class="primary">Apri un ticket</button></div><div class="panel"><h3>Le tue richieste recenti</h3>${table(d)}</div>`;$('openNow').onclick=()=>nav('new');wire()}
 async function home(){
   if(!isITRole())return userHome();
   page(isSuperIT()?'Dashboard SUPER IT':'Dashboard','Panoramica operativa del Service Desk');
@@ -639,13 +641,15 @@ function newTicket(){
     }
   };
 }
-async function mine(){page('I miei ticket','Storico delle tue richieste');const d=await select('tickets',`select=*&richiedente_email=eq.${encodeURIComponent(user.email)}&order=created_at.desc`);$('content').innerHTML=`<div class="panel">${table(d)}</div>`;wire()}
+async function mine(){const epoch=navigationEpoch;page('I miei ticket','Storico delle tue richieste');const d=await select('tickets',`select=*&richiedente_email=eq.${encodeURIComponent(user.email)}&order=created_at.desc`);if(epoch!==navigationEpoch)return;$('content').innerHTML=`<div class="panel">${table(d)}</div>`;wire()}
 async function it(){
+  const epoch=navigationEpoch;
   if(!isITRole())return userHome();
   page('Gestione IT','Coda operativa del reparto');
 
   const d=await select('tickets','select=*&order=updated_at.desc.nullslast,created_at.desc');
   const its=await select('profiles','select=id,nome,email,ruolo&ruolo=in.(IT,SUPER_IT)&order=nome.asc');
+  if(epoch!==navigationEpoch)return;
 
   let filter='OPEN',search='',category='',assignee='',order='old';
 
@@ -741,14 +745,16 @@ async function it(){
   $('queueOrder').onchange=e=>{order=e.target.value;render()};
   render();
 }
-async function calendar(){if(!isITRole())return userHome();page('Calendario','Appuntamenti collegati ai ticket');const d=await select('appointments','select=*,tickets(numero_ticket,oggetto,richiedente_nome)&order=start_at.asc');$('content').innerHTML=`<div class="panel"><h3>Appuntamenti</h3>${d.length?d.map(a=>`<div class="appointment"><b>${fmt(a.start_at)} • ${esc(a.modalita)}</b><div>${esc(a.tickets?.numero_ticket||'')} — ${esc(a.tickets?.oggetto||'')}</div><small>${esc(a.tickets?.richiedente_nome||'')} • ${a.durata_minuti} min</small></div>`).join(''):'<p>Nessun appuntamento.</p>'}</div>`}
+async function calendar(){const epoch=navigationEpoch;if(!isITRole())return userHome();page('Calendario','Appuntamenti collegati ai ticket');const d=await select('appointments','select=*,tickets(numero_ticket,oggetto,richiedente_nome)&order=start_at.asc');if(epoch!==navigationEpoch)return;$('content').innerHTML=`<div class="panel"><h3>Appuntamenti</h3>${d.length?d.map(a=>`<div class="appointment"><b>${fmt(a.start_at)} • ${esc(a.modalita)}</b><div>${esc(a.tickets?.numero_ticket||'')} — ${esc(a.tickets?.oggetto||'')}</div><small>${esc(a.tickets?.richiedente_nome||'')} • ${a.durata_minuti} min</small></div>`).join(''):'<p>Nessun appuntamento.</p>'}</div>`}
 async function bookings(){
+  const epoch=navigationEpoch;
   if(!isITRole())return userHome();
   page('Prenotazioni','Richieste materiale e verbali di consegna');
 
   const rows=await select('material_bookings',
     'select=*,tickets(numero_ticket,oggetto,stato,priorita)&order=created_at.desc');
 
+  if(epoch!==navigationEpoch)return;
   const counts={
     request:rows.filter(x=>x.status==='RICHIESTA').length,
     check:rows.filter(x=>x.status==='DA VERIFICARE').length,
@@ -1552,6 +1558,7 @@ async function loadUnifiedHrMovements(){
 }
 
 async function hrHistory(){
+  const epoch=navigationEpoch;
   if(!isHR()&&!isITRole())return userHome();
   page('Storico movimenti','Ingressi, uscite e spostamenti · portale + storico HR importato');
 
@@ -1559,6 +1566,7 @@ async function hrHistory(){
   let q='',type='',site='',status='',showMovementList=false;
 
   const approvedSiteRows=await select('reference_values','select=value&value_type=eq.SITE&is_approved=eq.true&order=value.asc');
+  if(epoch!==navigationEpoch)return;
   const sites=approvedSiteRows.map(x=>x.value).filter(Boolean);
   const statuses=['DA VERIFICARE','VERIFICATO','PREVISTO','CONFERMATO','EFFETTUATO','ANNULLATO'];
   const types=['INGRESSO','USCITA','SPOSTAMENTO','SMART WORKING','ALTRO'];
@@ -1651,10 +1659,12 @@ async function hrHistory(){
 }
 
 async function hrStats(){
+  const epoch=navigationEpoch;
   if(!isHR()&&!isITRole())return userHome();
   page('Statistiche HR','Movimenti portale + storico HR importato');
 
   const allRows=await loadUnifiedHrMovements();
+  if(epoch!==navigationEpoch)return;
   const today=new Date().toISOString().slice(0,10);
   const nonCancelled=allRows.filter(x=>x._source==='PORTALE'?x.status!=='ANNULLATO':hrRawStatusActive(x._status));
   // Numeri ufficiali: movimenti con data trascorsa/odierna e stato consolidato.
@@ -1744,6 +1754,7 @@ function sourceBadge(s){
 function sameText(a,b){return normSearch(a)===normSearch(b)}
 
 async function people(){
+  const epoch=navigationEpoch;
   if(!isHROrIT())return userHome();
   page('Persone','Anagrafica master, fonti e verifica fisica');
 
@@ -1754,6 +1765,7 @@ async function people(){
     isITRole()?select('data_conflicts','select=id,source_type,conflict_type,conflict_key,status&status=eq.APERTO&order=created_at.desc&limit=500'):Promise.resolve([]),
     select('reference_values','select=value&value_type=eq.SITE&is_approved=eq.true&order=value.asc')
   ]);
+  if(epoch!==navigationEpoch)return;
 
   const sourceMap=new Map();
   for(const s of sources){
@@ -2134,6 +2146,7 @@ async function personEdit(id){
 
 
 async function census(){
+  const epoch=navigationEpoch;
   if(!isITRole())return userHome();
   page('Censimento','Inventario IT, verifica asset e storico');
 
@@ -2143,6 +2156,7 @@ async function census(){
     select('people','select=id,display_name'),
     select('reference_values','select=value&value_type=eq.SITE&is_approved=eq.true&order=value.asc')
   ]);
+  if(epoch!==navigationEpoch)return;
   const peopleMap=new Map(peopleRows.map(p=>[p.id,p]));
   rows.forEach(a=>a.current_person_name=a.assigned_person_id?peopleMap.get(a.assigned_person_id)?.display_name||'':'');
   let q='',site='',status='',verification='',assetSort='code',assetSortDir='asc',showAssetList=false;
@@ -2760,9 +2774,11 @@ async function assetDetail(id){
 
 
 async function deletionRequests(){
+  const epoch=navigationEpoch;
   if(!isITRole())return userHome();
   page('Eliminazioni','Richieste IT e approvazione SUPER_IT');
   const rows=await select('deletion_requests','select=*&order=requested_at.desc&limit=500');
+  if(epoch!==navigationEpoch)return;
   const pending=rows.filter(x=>x.status==='IN_ATTESA');
   $('content').innerHTML=`
     <div class="panel">
@@ -3103,6 +3119,7 @@ async function openSerialScanner(targetInput){
 // V8 — MAPPA SCHEMATICA POSTAZIONI / MAGAZZINO
 // ============================================================
 async function mapView(){
+  const epoch=navigationEpoch;
   if(!isITRole())return userHome();
   page('Mappa','Persone, postazioni e magazzino per sede');
   let positions=[];
@@ -3114,6 +3131,7 @@ async function mapView(){
     selectAll('assets','select=id,asset_code,category,brand,model,site,position,status,is_label_only&is_label_only=eq.false&order=asset_code.asc'),
     select('reference_values','select=value&value_type=eq.SITE&is_approved=eq.true&order=value.asc')
   ]);
+  if(epoch!==navigationEpoch)return;
   const sites=approvedSiteRows.map(x=>x.value).filter(Boolean);
   let activeSite=sites[0]||'';
   const render=()=>{
@@ -3155,6 +3173,7 @@ async function mapView(){
 }
 
 function nav(v){
+  navigationEpoch++;
   const normalUserViews=['new','mine'];
   const hrViews=['persone','hr-new','hr-history','hr-stats'];
 
