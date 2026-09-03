@@ -39,6 +39,56 @@ function goBack(){
 const $=i=>document.getElementById(i);
 const esc=s=>(s||'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
 
+
+// V8 — ordinamento tabelle + export Excel XML (.xls)
+function xlsEsc(v){return String(v??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
+function safeFileName(v){return String(v||'export').normalize('NFKD').replace(/[^a-zA-Z0-9_-]+/g,'_').replace(/^_+|_+$/g,'').slice(0,80)||'export'}
+function downloadXls(filename,sheets){
+  const ws=sheets.map(sheet=>{
+    const rows=(sheet.rows||[]).map(row=>`<Row>${row.map(cell=>`<Cell><Data ss:Type="String">${xlsEsc(cell)}</Data></Cell>`).join('')}</Row>`).join('');
+    return `<Worksheet ss:Name="${xlsEsc((sheet.name||'Dati').slice(0,31))}"><Table>${rows}</Table></Worksheet>`;
+  }).join('');
+  const xml=`<?xml version="1.0"?><?mso-application progid="Excel.Sheet"?><Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">${ws}</Workbook>`;
+  const blob=new Blob(['\ufeff',xml],{type:'application/vnd.ms-excel;charset=utf-8'});
+  const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=filename.endsWith('.xls')?filename:`${filename}.xls`;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+function tableRowsForXls(table){
+  return [...table.rows].map(r=>[...r.cells].map(c=>c.innerText.replace(/\s+/g,' ').trim()));
+}
+function inferSortValue(text){
+  const t=String(text||'').replace(/\s+/g,' ').trim();
+  const n=Number(t.replace(/\./g,'').replace(',','.').replace(/[^0-9.-]/g,''));
+  if(t && /^[-+]?\d[\d.,\s]*$/.test(t) && Number.isFinite(n))return {type:'number',value:n};
+  const dm=t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);if(dm){const y=+dm[3]<100?2000+(+dm[3]):+dm[3];return {type:'number',value:new Date(y,+dm[2]-1,+dm[1]).getTime()}}
+  return {type:'text',value:t.toLocaleLowerCase('it')};
+}
+function enableTableTools(root=document){
+  root.querySelectorAll('table').forEach(table=>{
+    if(table.dataset.v8Tools==='1')return;table.dataset.v8Tools='1';
+    const ths=[...table.querySelectorAll('thead th')];
+    ths.forEach((th,idx)=>{
+      th.classList.add('sortable-th');th.title='Ordina questa colonna';th.dataset.sortDir='';
+      const marker=document.createElement('span');marker.className='sort-marker';marker.textContent='↕';th.appendChild(marker);
+      th.addEventListener('click',e=>{
+        if(e.target.closest('button,input,select,a'))return;
+        const tbody=table.tBodies[0];if(!tbody)return;
+        const dir=th.dataset.sortDir==='asc'?'desc':'asc';ths.forEach(x=>{x.dataset.sortDir='';x.querySelector('.sort-marker')&&(x.querySelector('.sort-marker').textContent='↕')});th.dataset.sortDir=dir;marker.textContent=dir==='asc'?'▲':'▼';
+        const rows=[...tbody.rows];rows.sort((a,b)=>{const av=inferSortValue(a.cells[idx]?.innerText||'');const bv=inferSortValue(b.cells[idx]?.innerText||'');let cmp=0;if(av.type==='number'&&bv.type==='number')cmp=av.value-bv.value;else cmp=String(av.value).localeCompare(String(bv.value),'it',{numeric:true,sensitivity:'base'});return dir==='asc'?cmp:-cmp});rows.forEach(r=>tbody.appendChild(r));
+      });
+    });
+    const wrap=table.closest('.tablewrap');
+    if(wrap && !wrap.querySelector(':scope > .table-export-row')){
+      const tools=document.createElement('div');tools.className='table-export-row';tools.innerHTML='<button type="button" class="ghost compact">Scarica XLS</button>';
+      tools.querySelector('button').onclick=()=>downloadXls(`${safeFileName(document.title||'Archea')}_${safeFileName($('title')?.textContent||'tabella')}.xls`,[{name:'Tabella',rows:tableRowsForXls(table)}]);wrap.prepend(tools);
+    }
+  });
+}
+const tableObserver=new MutationObserver(()=>enableTableTools($('content')||document));
+window.addEventListener('DOMContentLoaded',()=>{const c=$('content');if(c){tableObserver.observe(c,{childList:true,subtree:true});enableTableTools(c)}});
+
+function warehouseCodeOk(code){return /^M-[A-Z]+\d*$/i.test(String(code||'').trim())}
+function normalPositionCodeOk(code){return !!String(code||'').trim()&&!/^M-/i.test(String(code||'').trim())}
+
 function enhanceSelect(id,{placeholder='Seleziona…',searchPlaceholder='Cerca…',searchThreshold=7}={}){
   const select=$(id);
   if(!select||select.dataset.smartSelect==='1')return;
@@ -1697,6 +1747,7 @@ async function people(){
     const g=legacyGroups.get(key);g.count++;if(s.source_row)g.rows.push(s.source_row);if(s.site_raw)g.sites.add(s.site_raw);
   }
 
+  let peopleSort='name',peopleSortDir='asc';
   const sites=[...new Set(persons.map(x=>x.site).filter(Boolean))].sort();
   $('content').innerHTML=`
     <div class="metrics people-metrics">
@@ -1714,8 +1765,11 @@ async function people(){
         <select id="peopleSite"><option value="">Tutte le sedi</option>${sites.map(x=>`<option>${esc(x)}</option>`).join('')}</select>
         <select id="peopleStatus"><option value="">Tutti gli stati</option><option>ATTIVO</option><option>USCITO</option><option>PREVISTO</option><option>SCONOSCIUTO</option></select>
         <select id="peopleVerify"><option value="">Tutte le verifiche</option><option>VERIFICATO</option><option>DA VERIFICARE</option><option>DUBBIO</option></select>
+        <select id="peopleSort"><option value="name">Ordina: Nome</option><option value="site">Ordina: Sede</option><option value="department">Ordina: Dipartimento</option><option value="assets">Ordina: Asset</option><option value="status">Ordina: Stato</option></select>
+        <select id="peopleSortDir"><option value="asc">A→Z / crescente</option><option value="desc">Z→A / decrescente</option></select>
       </div>
       <div class="button-row">
+        <button id="exportPeopleXls" class="ghost">Scarica Persone XLS</button>
         ${isSuperIT()?'<button id="showHrImport" class="secondary">Importa HR Movimenti</button><button id="manageReferenceValues" class="ghost">Gestisci valori controllati</button>':''}
       </div>
       <div id="peopleTable"></div>
@@ -1733,13 +1787,21 @@ async function people(){
       <p id="hrPeopleImportResult"></p>
     </div>`:''}`;
 
+  $('exportPeopleXls').onclick=()=>{
+    const exportRows=[['Persona','Email','Società','Sede','Dipartimento','Profilo','Stato','Verifica','Asset totali','Asset verificati','Asset da confermare','Fonti']];
+    persons.forEach(p=>{const a=assetStats.get(p.id)||{total:0,verified:0,pending:0};exportRows.push([p.display_name||'',p.corporate_email||'',p.company||'',p.site||'',p.department||'',p.profile||'',p.current_status||'',p.verification_status||'',a.total,a.verified,a.pending,[...(sourceMap.get(p.id)||[])].join(', ')]);});
+    downloadXls(`Archea_Persone_${new Date().toISOString().slice(0,10)}.xls`,[{name:'Persone',rows:exportRows}]);
+  };
+
   const render=()=>{
     const q=normSearch($('peopleSearch').value);const site=$('peopleSite').value;const st=$('peopleStatus').value;const vf=$('peopleVerify').value;
-    const filtered=persons.filter(p=>{
+    let filtered=persons.filter(p=>{
       if(site&&p.site!==site)return false;if(st&&p.current_status!==st)return false;if(vf&&p.verification_status!==vf)return false;
       if(q){const hay=normSearch(`${p.display_name||''} ${p.first_name||''} ${p.surname||''} ${p.corporate_email||''} ${p.company||''} ${p.site||''} ${p.department||''} ${p.profile||''}`);if(!hay.includes(q))return false}
       return true;
     });
+    const personSortValue=p=>peopleSort==='site'?(p.site||''):peopleSort==='department'?(p.department||''):peopleSort==='assets'?(assetStats.get(p.id)?.total||0):peopleSort==='status'?(p.current_status||''):(p.display_name||'');
+    filtered.sort((a,b)=>{const av=personSortValue(a),bv=personSortValue(b);const cmp=typeof av==='number'&&typeof bv==='number'?av-bv:String(av).localeCompare(String(bv),'it',{numeric:true,sensitivity:'base'});return peopleSortDir==='asc'?cmp:-cmp});
     $('peopleTable').innerHTML=filtered.length?`<div class="tablewrap"><table class="people-table">
       <thead><tr><th>Persona</th><th>Sede</th><th>Dipartimento / Profilo</th><th>Fonti</th><th>Asset</th><th>Stato</th><th>Verifica</th></tr></thead>
       <tbody>${filtered.map(p=>`<tr class="click" data-person-id="${p.id}">
@@ -1761,6 +1823,8 @@ async function people(){
   };
 
   ['peopleSearch','peopleSite','peopleStatus','peopleVerify'].forEach(id=>{$(id).oninput=render;$(id).onchange=render});
+  $('peopleSort').onchange=e=>{peopleSort=e.target.value;render()};
+  $('peopleSortDir').onchange=e=>{peopleSortDir=e.target.value;render()};
   if($('showHrImport'))$('showHrImport').onclick=()=>{
     const panel=$('hrImportPanel');
     if(!panel)return;
@@ -1973,7 +2037,7 @@ async function census(){
   ]);
   const peopleMap=new Map(peopleRows.map(p=>[p.id,p]));
   rows.forEach(a=>a.current_person_name=a.assigned_person_id?peopleMap.get(a.assigned_person_id)?.display_name||'':'');
-  let q='',site='',status='',verification='';
+  let q='',site='',status='',verification='',assetSort='code',assetSortDir='asc';
 
   const realAssets=rows.filter(x=>!x.is_label_only);
   const labelOnly=rows.filter(x=>x.is_label_only);
@@ -2004,12 +2068,16 @@ async function census(){
           <option value="">Tutte le verifiche</option>
           <option>VERIFICATO</option><option>DA VERIFICARE</option><option>DUBBIO</option><option>NON TROVATO</option><option>ASSEGNAZIONE DA CONFERMARE</option>
         </select>
+        <select id="assetSort"><option value="code">Ordina: Codice</option><option value="category">Ordina: Categoria</option><option value="site">Ordina: Sede</option><option value="position">Ordina: Posizione</option><option value="assignee">Ordina: Assegnatario</option><option value="status">Ordina: Stato</option></select>
+        <select id="assetSortDir"><option value="asc">A→Z / crescente</option><option value="desc">Z→A / decrescente</option></select>
       </div>
 
       <div class="asset-search-summary" id="assetSearchSummary"></div>
 
       <div class="button-row asset-actions">
         <button id="newAsset" class="primary">+ Associa etichetta a dispositivo</button>
+        <button id="scanAsset" class="secondary">Fotocamera / Scansiona</button>
+        <button id="exportCensusXls" class="ghost">Scarica Censimento XLS</button>
         ${isSuperIT()?'<button id="importAssets" class="secondary">Importa foglio Device</button>':''}
       </div>
 
@@ -2031,7 +2099,7 @@ async function census(){
     </div>`:''}`;
 
   const render=()=>{
-    const filtered=rows.filter(x=>{
+    let filtered=rows.filter(x=>{
       if(site&&x.site!==site)return false;
       if(status==='ETICHETTA LIBERA'&&!x.is_label_only)return false;
       if(status&&status!=='ETICHETTA LIBERA'&&(x.is_label_only||x.status!==status))return false;
@@ -2039,6 +2107,8 @@ async function census(){
       if(q&&!matchesAssetSearch(x,q))return false;
       return true;
     });
+    const assetSortValue=a=>assetSort==='category'?(a.category||''):assetSort==='site'?(a.site||''):assetSort==='position'?(a.position||''):assetSort==='assignee'?(a.current_person_name||a.assigned_user_name||a.assigned_user_email||''):assetSort==='status'?(a.status||''):(a.asset_code||'');
+    filtered.sort((a,b)=>{const cmp=String(assetSortValue(a)).localeCompare(String(assetSortValue(b)),'it',{numeric:true,sensitivity:'base'});return assetSortDir==='asc'?cmp:-cmp});
 
     const visible=filtered.slice(0,500);
     const filteredAssets=filtered.filter(x=>!x.is_label_only);
@@ -2075,7 +2145,15 @@ async function census(){
   $('assetSite').onchange=e=>{site=e.target.value;render()};
   $('assetStatus').onchange=e=>{status=e.target.value;render()};
   $('assetVerification').onchange=e=>{verification=e.target.value;render()};
+  $('assetSort').onchange=e=>{assetSort=e.target.value;render()};
+  $('assetSortDir').onchange=e=>{assetSortDir=e.target.value;render()};
   $('newAsset').onclick=()=>openSubView('asset-edit',()=>assetEdit(null));
+  $('scanAsset').onclick=()=>openAssetScanner(rows);
+  $('exportCensusXls').onclick=()=>{
+    const exportRows=[['Codice','Categoria','Marca','Modello','Seriale','Sede','Posizione','Assegnatario','Stato','Verifica','Etichetta libera','Fonte','Riga fonte']];
+    rows.forEach(a=>exportRows.push([a.asset_code||'',a.category||'',a.brand||'',a.model||'',a.serial_number||'',a.site||'',a.position||'',a.current_person_name||a.assigned_user_name||a.assigned_user_email||'',a.is_label_only?'ETICHETTA LIBERA':(a.status||''),a.verification_status||'',a.is_label_only?'SI':'NO',a.source_sheet||'',a.source_row||'']));
+    downloadXls(`Archea_Censimento_${new Date().toISOString().slice(0,10)}.xls`,[{name:'Censimento',rows:exportRows}]);
+  };
 
   if($('importAssets'))$('importAssets').onclick=()=>{
     const panel=$('importPanel');
@@ -2748,6 +2826,100 @@ async function detail(id){
   }
   comments();
 }
+
+
+// ============================================================
+// V8 — FOTOCAMERA / SCANSIONE ASSET
+// ============================================================
+async function openAssetScanner(cachedRows=null){
+  const overlay=document.createElement('div');
+  overlay.className='scanner-overlay';
+  overlay.innerHTML=`<div class="scanner-card">
+    <div class="scanner-head"><div><span class="eyebrow">V8 · VERIFICA SUL CAMPO</span><h3>Scansiona asset</h3></div><button class="ghost compact" id="closeScanner">Chiudi</button></div>
+    <div class="scanner-video-wrap"><video id="scannerVideo" autoplay playsinline muted></video><div class="scanner-frame"></div></div>
+    <div id="scannerStatus" class="info-box">Avvio fotocamera…</div>
+    <div class="scanner-manual"><label>Codice asset<input id="scannerManualCode" autocomplete="off" autocapitalize="characters" placeholder="Es. A4076"></label><button id="scannerOpenCode" class="primary">Apri asset</button></div>
+    <p class="muted-line">Se l'etichetta contiene QR/barcode, il browser prova a riconoscerla automaticamente. Per le etichette solo testuali puoi usare la fotocamera come supporto e digitare il codice.</p>
+  </div>`;
+  document.body.appendChild(overlay);
+  const video=overlay.querySelector('#scannerVideo');const status=overlay.querySelector('#scannerStatus');
+  let stream=null,stopped=false,raf=0,detector=null;
+  const close=()=>{stopped=true;if(raf)cancelAnimationFrame(raf);if(stream)stream.getTracks().forEach(t=>t.stop());overlay.remove()};
+  overlay.querySelector('#closeScanner').onclick=close;
+  overlay.addEventListener('click',e=>{if(e.target===overlay)close()});
+  async function openCode(raw){
+    const code=String(raw||'').trim().toUpperCase().match(/[A-Z]+-?[A-Z]*\d+|A\d+/)?.[0]||String(raw||'').trim().toUpperCase();
+    if(!code)return toast('Inserisci un codice asset');
+    let a=(cachedRows||[]).find(x=>String(x.asset_code||'').toUpperCase()===code);
+    if(!a){const found=await select('assets',`select=id,asset_code&asset_code=eq.${encodeURIComponent(code)}&limit=1`);a=found[0]}
+    if(!a){status.innerHTML=`Codice <b>${esc(code)}</b> non trovato nel censimento.`;return}
+    close();openSubView('asset-detail',()=>assetDetail(a.id));
+  }
+  overlay.querySelector('#scannerOpenCode').onclick=()=>openCode(overlay.querySelector('#scannerManualCode').value);
+  overlay.querySelector('#scannerManualCode').addEventListener('keydown',e=>{if(e.key==='Enter')openCode(e.target.value)});
+  try{
+    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}},audio:false});video.srcObject=stream;
+    const formats=['qr_code','code_128','code_39','ean_13','ean_8','data_matrix'];
+    if('BarcodeDetector' in window){try{detector=new BarcodeDetector({formats})}catch{detector=new BarcodeDetector()}}
+    status.innerHTML=detector?'Fotocamera attiva. Inquadra QR/barcode oppure digita il codice.':'Fotocamera attiva. Riconoscimento automatico barcode non disponibile su questo browser: digita il codice stampato.';
+    const scan=async()=>{if(stopped)return;try{if(detector&&video.readyState>=2){const codes=await detector.detect(video);if(codes?.length){const raw=codes[0].rawValue||'';status.innerHTML=`Rilevato: <b>${esc(raw)}</b>`;await openCode(raw);return}}}catch{}raf=requestAnimationFrame(scan)};scan();
+  }catch(err){status.innerHTML=`Fotocamera non disponibile: ${esc(err.message)}. Puoi comunque digitare il codice.`}
+}
+
+// ============================================================
+// V8 — MAPPA SCHEMATICA POSTAZIONI / MAGAZZINO
+// ============================================================
+async function mapView(){
+  if(!isITRole())return userHome();
+  page('Mappa','Persone, postazioni e magazzino per sede');
+  let positions=[];
+  try{positions=await select('map_positions','select=*&is_active=eq.true&order=site.asc,zone_code.asc,position_code.asc')}catch(err){
+    $('content').innerHTML=`<div class="panel"><div class="info-box"><b>Mappa V8 non ancora inizializzata.</b><br>Esegui la migration <code>08_migration_v8_map.sql</code> in Supabase e ricarica la pagina.</div></div>`;return;
+  }
+  const [persons,assets]=await Promise.all([
+    selectAll('people','select=id,display_name,site,department,current_status,map_position_id&current_status=neq.USCITO&order=display_name.asc'),
+    selectAll('assets','select=id,asset_code,category,brand,model,site,position,status,is_label_only&is_label_only=eq.false&order=asset_code.asc')
+  ]);
+  const sites=[...new Set([...positions.map(x=>x.site),...persons.map(x=>x.site),...assets.map(x=>x.site)].filter(Boolean))].sort((a,b)=>a.localeCompare(b,'it'));
+  let activeSite=sites[0]||'';
+  const render=()=>{
+    const ps=positions.filter(x=>!activeSite||x.site===activeSite);
+    const peopleSite=persons.filter(x=>!activeSite||x.site===activeSite);
+    const unplaced=peopleSite.filter(x=>!x.map_position_id);
+    const warehouse=ps.filter(x=>x.position_type==='MAGAZZINO');
+    $('mapBody').innerHTML=`
+      <div class="map-summary"><div><span>Posizioni</span><b>${ps.length}</b></div><div><span>Persone senza posizione</span><b>${unplaced.length}</b></div><div><span>Magazzino</span><b>${warehouse.length}</b></div></div>
+      ${ps.length?`<div class="map-zone-grid">${ps.map(pos=>{
+        const occupants=peopleSite.filter(p=>p.map_position_id===pos.id);
+        const posAssets=assets.filter(a=>(!activeSite||a.site===activeSite)&&normSearch(a.position)===normSearch(pos.position_code));
+        return `<div class="map-position-card ${pos.position_type==='MAGAZZINO'?'warehouse-position':''}">
+          <div class="map-position-head"><div><span class="position-code">${esc(pos.position_code)}</span><small>${esc(pos.zone_code||pos.position_type)}</small></div><span class="badge">${esc(pos.position_type)}</span></div>
+          ${pos.label?`<p>${esc(pos.label)}</p>`:''}
+          <div class="map-occupants">${occupants.length?occupants.map(p=>`<button class="map-person-chip" data-map-person="${p.id}">${esc(p.display_name)}${p.department?` · ${esc(p.department)}`:''}</button>`).join(''):'<span class="muted-line">Nessuna persona</span>'}</div>
+          <div class="map-assets">${posAssets.length?`<b>${posAssets.length} asset</b><small>${esc(posAssets.slice(0,5).map(a=>a.asset_code).join(', '))}${posAssets.length>5?'…':''}</small>`:'<span class="muted-line">Nessun asset</span>'}</div>
+          <div class="button-row"><button class="ghost compact" data-assign-map="${pos.id}">Assegna persona</button></div>
+        </div>`}).join('')}</div>`:'<div class="empty">Nessuna posizione configurata per questa sede.</div>'}
+      ${unplaced.length?`<div class="panel map-unplaced"><h3>Persone senza posizione in ${esc(activeSite||'sede')}</h3><div class="map-unplaced-list">${unplaced.slice(0,100).map(p=>`<button class="ghost compact" data-map-person="${p.id}">${esc(p.display_name)}</button>`).join('')}</div></div>`:''}`;
+    document.querySelectorAll('[data-map-person]').forEach(b=>b.onclick=()=>openSubView('person-detail',()=>personDetail(+b.dataset.mapPerson)));
+    document.querySelectorAll('[data-assign-map]').forEach(b=>b.onclick=()=>showAssignPerson(+b.dataset.assignMap));
+  };
+  $('content').innerHTML=`<div class="panel map-toolbar-panel">
+    <div class="map-toolbar"><label>Sede<select id="mapSite">${sites.map(x=>`<option value="${esc(x)}">${esc(x)}</option>`).join('')}</select></label><button id="newMapPosition" class="primary">+ Posizione</button><button id="exportMapXls" class="ghost">Scarica Mappa XLS</button></div>
+    <div class="info-box"><b>Convenzione magazzino:</b> le posizioni di magazzino usano sempre il prefisso <b>M-</b>, ad esempio <b>M-A1</b>, <b>M-A2</b>, <b>M-B1</b>. Le postazioni normali non possono usare M-.</div>
+  </div><div id="mapBody"></div><div id="mapEditor"></div>`;
+  $('mapSite').value=activeSite;$('mapSite').onchange=e=>{activeSite=e.target.value;render()};
+  $('newMapPosition').onclick=()=>showPositionEditor();
+  $('exportMapXls').onclick=()=>{const rr=[['Sede','Tipo','Zona','Codice','Etichetta','Persone','Asset']];positions.forEach(pos=>{const occ=persons.filter(p=>p.map_position_id===pos.id).map(p=>p.display_name).join(', ');const aa=assets.filter(a=>a.site===pos.site&&normSearch(a.position)===normSearch(pos.position_code)).map(a=>a.asset_code).join(', ');rr.push([pos.site,pos.position_type,pos.zone_code||'',pos.position_code,pos.label||'',occ,aa])});downloadXls(`Archea_Mappa_${new Date().toISOString().slice(0,10)}.xls`,[{name:'Mappa',rows:rr}])};
+  async function showPositionEditor(){
+    const ed=$('mapEditor');ed.innerHTML=`<div class="panel"><h3>Nuova posizione</h3><div class="formgrid"><label>Sede<input id="mpSite" value="${esc(activeSite)}" required></label><label>Tipo<select id="mpType"><option>POSTAZIONE</option><option>MAGAZZINO</option></select></label><label>Zona<input id="mpZone" placeholder="Es. A, B, Piano 1"></label><label>Codice<input id="mpCode" placeholder="Es. Z-A12 oppure M-A1" required></label><label class="full">Etichetta / nota breve<input id="mpLabel" placeholder="Es. Open space A / Armadio basso"></label></div><div class="button-row"><button id="saveMapPosition" class="primary">Salva posizione</button><button id="cancelMapPosition" class="ghost">Annulla</button></div></div>`;
+    $('cancelMapPosition').onclick=()=>ed.innerHTML='';$('saveMapPosition').onclick=async()=>{const type=$('mpType').value;const code=$('mpCode').value.trim().toUpperCase();if(type==='MAGAZZINO'&&!warehouseCodeOk(code))return toast('Il magazzino deve usare codici M-A1, M-B2, ecc.');if(type==='POSTAZIONE'&&!normalPositionCodeOk(code))return toast('Una postazione normale non può iniziare con M-');try{await insert('map_positions',{site:$('mpSite').value.trim(),position_type:type,zone_code:$('mpZone').value.trim()||null,position_code:code,label:$('mpLabel').value.trim()||null,created_by:user.id,created_by_name:currentITName()},false);toast('Posizione creata');mapView()}catch(err){toast(err.message)}};
+  }
+  async function showAssignPerson(positionId){
+    const pos=positions.find(x=>x.id===positionId);const candidates=persons.filter(p=>p.site===pos.site&&p.current_status!=='USCITO');const ed=$('mapEditor');ed.innerHTML=`<div class="panel"><h3>Assegna persona a ${esc(pos.position_code)}</h3><label>Persona<select id="mapPersonSelect"><option value="">Seleziona…</option>${candidates.map(p=>`<option value="${p.id}">${esc(p.display_name)}${p.department?` · ${esc(p.department)}`:''}</option>`).join('')}</select></label><div class="button-row"><button id="saveMapPerson" class="primary">Assegna</button><button id="cancelMapPerson" class="ghost">Annulla</button></div></div>`;$('cancelMapPerson').onclick=()=>ed.innerHTML='';$('saveMapPerson').onclick=async()=>{const pid=+$('mapPersonSelect').value;if(!pid)return toast('Seleziona una persona');try{await update('people',`id=eq.${pid}`,{map_position_id:positionId,updated_at:new Date().toISOString()});await insert('person_events',{person_id:pid,event_type:'POSIZIONE_MAPPA',event_date:new Date().toISOString().slice(0,10),source_type:'PORTALE',note:`Posizione mappa assegnata: ${pos.position_code}`,new_data:{map_position_id:positionId,position_code:pos.position_code},created_by:user.id,created_by_name:currentITName()},false);toast('Posizione assegnata');mapView()}catch(err){toast(err.message)}};
+  }
+  render();
+}
+
 function nav(v){
   const normalUserViews=['new','mine'];
   const hrViews=['hr-new','hr-history','hr-stats'];
@@ -2774,6 +2946,7 @@ function nav(v){
   else if(v==='movimenti')hrHistory();
   else if(v==='persone')people();
   else if(v==='censimento')census();
+  else if(v==='mappa')mapView();
   else if(v==='eliminazioni')deletionRequests();
   else if(v==='hr-new')hrNewMovement();
   else if(v==='hr-history')hrHistory();

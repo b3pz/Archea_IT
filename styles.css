@@ -1256,3 +1256,47 @@ html[data-theme="dark"] .account{background:#1b1e1c;border-color:#343835}
   .people-table td,.asset-table td{grid-template-columns:92px minmax(0,1fr)}
   .theme-toggle #themeLabel{display:none}
 }
+
+/* ============================================================
+   V8 — TABLE SORT / XLS
+   ============================================================ */
+.sortable-th{cursor:pointer;user-select:none;white-space:nowrap}
+.sortable-th:hover{background:rgba(120,144,131,.08)}
+.sort-marker{font-size:10px;opacity:.55;margin-left:7px;vertical-align:middle}
+.table-export-row{display:flex;justify-content:flex-end;padding:0 0 8px}
+
+/* ============================================================
+   V8 — CAMERA ASSET
+   ============================================================ */
+.scanner-overlay{position:fixed;inset:0;z-index:5000;background:rgba(0,0,0,.76);display:flex;align-items:center;justify-content:center;padding:18px}
+.scanner-card{width:min(680px,100%);max-height:92vh;overflow:auto;background:var(--panel,#fff);border:1px solid var(--border,#d9ddd9);border-radius:18px;padding:18px;box-shadow:0 24px 80px rgba(0,0,0,.35)}
+.scanner-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:12px}
+.scanner-head h3{margin:.2rem 0 0}
+.scanner-video-wrap{position:relative;background:#050505;border-radius:14px;overflow:hidden;aspect-ratio:4/3;margin-bottom:12px}
+.scanner-video-wrap video{width:100%;height:100%;object-fit:cover;display:block}
+.scanner-frame{position:absolute;left:12%;right:12%;top:34%;height:30%;border:2px solid rgba(255,255,255,.9);border-radius:12px;box-shadow:0 0 0 999px rgba(0,0,0,.14)}
+.scanner-manual{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:end;margin-top:12px}
+.scanner-manual label{margin:0}
+
+/* ============================================================
+   V8 — MAPPA SCHEMATICA / MAGAZZINO
+   ============================================================ */
+.map-toolbar{display:flex;align-items:end;gap:10px;flex-wrap:wrap}
+.map-toolbar label{min-width:220px;margin:0}
+.map-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:14px 0}
+.map-summary>div{background:var(--panel,#fff);border:1px solid var(--border,#ddd);border-radius:12px;padding:14px;display:flex;justify-content:space-between;gap:12px;align-items:center}
+.map-summary span{font-size:12px;opacity:.7;text-transform:uppercase;letter-spacing:.05em}.map-summary b{font-size:24px}
+.map-zone-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(245px,1fr));gap:12px}
+.map-position-card{background:var(--panel,#fff);border:1px solid var(--border,#ddd);border-radius:14px;padding:14px;min-height:190px;display:flex;flex-direction:column;gap:10px}
+.map-position-card.warehouse-position{border-style:dashed}
+.map-position-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
+.position-code{display:block;font-size:22px;font-weight:800;letter-spacing:.03em}.map-position-head small{display:block;opacity:.65;margin-top:2px}
+.map-occupants{display:flex;flex-wrap:wrap;gap:6px;min-height:34px}.map-person-chip{border:1px solid var(--border,#ddd);background:transparent;border-radius:999px;padding:7px 10px;font:inherit;font-size:12px;cursor:pointer}
+.map-assets{display:flex;flex-direction:column;gap:2px;margin-top:auto}.map-assets small{opacity:.66;line-height:1.35}
+.map-unplaced{margin-top:16px}.map-unplaced-list{display:flex;flex-wrap:wrap;gap:7px}
+
+@media(max-width:700px){
+  .scanner-overlay{padding:0;align-items:stretch}.scanner-card{max-height:none;height:100dvh;border-radius:0;border:0;padding:calc(14px + env(safe-area-inset-top)) 14px calc(14px + env(safe-area-inset-bottom))}.scanner-video-wrap{aspect-ratio:3/4;max-height:58vh}.scanner-manual{grid-template-columns:1fr}.scanner-manual button{width:100%}
+  .map-summary{grid-template-columns:1fr 1fr}.map-summary>div:last-child{grid-column:1/-1}.map-zone-grid{grid-template-columns:1fr}.map-toolbar>*{width:100%}.map-toolbar label{min-width:0}.map-toolbar button{width:100%}
+  .table-export-row{justify-content:stretch}.table-export-row button{width:100%}
+}
