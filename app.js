@@ -2055,7 +2055,7 @@ async function census(){
 
     $('assetTable').innerHTML=filtered.length?`
       ${filtered.length>visible.length?`<div class="info-box compact-info">Risultati totali: <b>${filtered.length}</b>. Per mantenere il portale veloce sono visualizzate le prime <b>${visible.length}</b> righe: usa ricerca e filtri per restringere.</div>`:''}
-      <div class="tablewrap"><table>
+      <div class="tablewrap"><table class="asset-table">
         <thead><tr><th>Codice</th><th>Categoria / Modello</th><th>Sede / Posizione</th><th>Assegnato a</th><th>Stato</th><th>Verifica</th><th>Ultima verifica</th></tr></thead>
         <tbody>${visible.map(a=>`<tr class="click ${a.is_label_only?'label-only-row':''}" data-asset="${a.id}">
           <td><b>${esc(a.asset_code)}</b><small class="subline">${a.is_label_only?'Codice predisposto':esc(a.serial_number||'')}</small></td>
@@ -2797,7 +2797,31 @@ setInterval(async()=>{
 }
 $('loginForm').onsubmit=async e=>{e.preventDefault();$('loginErr').textContent='';try{const d=await api('/auth/v1/token?grant_type=password',{method:'POST',auth:false,body:{email:$('email').value.trim(),password:$('password').value}});save(d);user=d.user;await boot()}catch(err){$('loginErr').textContent=err.message}}
 $('logout').onclick=()=>{clear();location.reload()};
-document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>nav(b.dataset.view));
+function closeMobileNav(){
+  const sidebar=$('sidebar');
+  const backdrop=$('mobileNavBackdrop');
+  const btn=$('mobileMenuBtn');
+  if(sidebar)sidebar.classList.remove('mobile-open');
+  if(backdrop)backdrop.classList.add('hidden');
+  if(btn)btn.setAttribute('aria-expanded','false');
+  document.body.classList.remove('mobile-nav-open');
+}
+function openMobileNav(){
+  const sidebar=$('sidebar');
+  const backdrop=$('mobileNavBackdrop');
+  const btn=$('mobileMenuBtn');
+  if(sidebar)sidebar.classList.add('mobile-open');
+  if(backdrop)backdrop.classList.remove('hidden');
+  if(btn)btn.setAttribute('aria-expanded','true');
+  document.body.classList.add('mobile-nav-open');
+}
+document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{closeMobileNav();nav(b.dataset.view)});
+if($('mobileMenuBtn'))$('mobileMenuBtn').onclick=()=>{
+  const open=$('sidebar')?.classList.contains('mobile-open');
+  open?closeMobileNav():openMobileNav();
+};
+if($('mobileNavBackdrop'))$('mobileNavBackdrop').onclick=closeMobileNav;
+window.addEventListener('resize',()=>{if(window.innerWidth>900)closeMobileNav()});
 if($('backBtn')) $('backBtn').onclick=goBack;
 if($('themeToggle')) $('themeToggle').onclick=()=>applyTheme(document.documentElement.dataset.theme==='dark'?'light':'dark');
 initTheme();

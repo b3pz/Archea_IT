@@ -44,7 +44,8 @@
 </section>
 
 <section id="app" class="app hidden">
-  <aside class="sidebar">
+  <div id="mobileNavBackdrop" class="mobile-nav-backdrop hidden" aria-hidden="true"></div>
+  <aside id="sidebar" class="sidebar">
     <div class="sidebar-top">
       <div class="brand">
         <img src="logo_archea.png" alt="Archea Associati">
@@ -109,6 +110,7 @@
     </div>
 
     <header class="topbar">
+      <button id="mobileMenuBtn" class="mobile-menu-btn" type="button" aria-label="Apri menu" aria-expanded="false"><span></span><span></span><span></span></button>
       <div class="page-heading-wrap">
         <button id="backBtn" class="back-btn hidden" type="button" aria-label="Torna indietro">← <span>Torna indietro</span></button>
         <div class="page-heading">
@@ -146,12 +148,12 @@
     <div id="content"></div>
 
     <footer class="app-footer">
-      <span>Archea Service Desk · V6.1 STABLE</span>
+      <span>Archea Service Desk · V7.0 MOBILE FIRST</span>
       <span>Sviluppato dal Dipartimento IT · Archea Associati</span>
     </footer>
   </main>
 </section>
 
-<script src="app.js?v=6110"></script>
+<script src="app.js?v=7000"></script>
 </body>
 </html>
