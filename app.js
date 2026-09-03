@@ -1668,8 +1668,27 @@ async function people(){
     if(!sourceMap.has(s.person_id))sourceMap.set(s.person_id,new Set());
     sourceMap.get(s.person_id).add(s.source_type);
   }
-  const assetCount=new Map();
-  for(const a of assets){if(a.assigned_person_id)assetCount.set(a.assigned_person_id,(assetCount.get(a.assigned_person_id)||0)+1)}
+  // V6.1: il contatore Persone deve includere sia asset confermati sia legacy da confermare.
+  const assetStats=new Map();
+  const personDeviceNames=new Map();
+  for(const s of sources){
+    if(s.person_id&&s.source_type==='DEVICE'&&s.name_raw){
+      if(!personDeviceNames.has(s.person_id))personDeviceNames.set(s.person_id,new Set());
+      personDeviceNames.get(s.person_id).add(normSearch(s.name_raw));
+    }
+  }
+  for(const p of persons){
+    const keys=personDeviceNames.get(p.id)||new Set();
+    const confirmed=assets.filter(a=>a.assigned_person_id===p.id);
+    const candidates=assets.filter(a=>!a.assigned_person_id&&a.assigned_user_name&&keys.has(normSearch(a.assigned_user_name)));
+    const unique=new Map([...confirmed,...candidates].map(a=>[a.id,a]));
+    const all=[...unique.values()];
+    assetStats.set(p.id,{
+      total:all.length,
+      verified:all.filter(a=>a.assigned_person_id===p.id&&a.verification_status==='VERIFICATO').length,
+      pending:all.filter(a=>a.assigned_person_id!==p.id||a.verification_status!=='VERIFICATO').length
+    });
+  }
 
   const legacyGroups=new Map();
   for(const s of sources.filter(x=>x.source_type==='DEVICE'&&!x.person_id&&x.name_raw)){
@@ -1728,7 +1747,7 @@ async function people(){
         <td>${esc(p.site||'—')}</td>
         <td>${esc(p.department||'—')}${p.profile?`<small>${esc(p.profile)}</small>`:''}</td>
         <td><div class="source-chips">${[...(sourceMap.get(p.id)||[])].map(sourceBadge).join('')}</div></td>
-        <td><b>${assetCount.get(p.id)||0}</b></td>
+        <td>${(()=>{const s=assetStats.get(p.id)||{total:0,verified:0,pending:0};return `<div class="people-asset-count"><b>${s.total}</b>${s.total?`<small>${s.verified} verificati · ${s.pending} da confermare</small>`:''}</div>`})()}</td>
         <td>${personStatusBadge(p.current_status)}</td><td>${personVerifyBadge(p.verification_status)}</td>
       </tr>`).join('')}</tbody></table></div>`:'<div class="empty">Nessuna persona trovata.</div>';
     document.querySelectorAll('[data-person-id]').forEach(x=>x.onclick=()=>openSubView('person-detail',()=>personDetail(+x.dataset.personId)));
