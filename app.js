@@ -1742,7 +1742,17 @@ async function people(){
   };
 
   ['peopleSearch','peopleSite','peopleStatus','peopleVerify'].forEach(id=>{$(id).oninput=render;$(id).onchange=render});
-  if($('showHrImport'))$('showHrImport').onclick=()=>$('hrImportPanel').classList.toggle('hidden');
+  if($('showHrImport'))$('showHrImport').onclick=()=>{
+    const panel=$('hrImportPanel');
+    if(!panel)return;
+    const opening=panel.classList.contains('hidden');
+    panel.classList.toggle('hidden');
+    if(opening){
+      const row=$('showHrImport').closest('.button-row');
+      if(row)row.after(panel);
+      requestAnimationFrame(()=>panel.scrollIntoView({behavior:'smooth',block:'nearest'}));
+    }
+  };
   if($('manageReferenceValues'))$('manageReferenceValues').onclick=()=>openSubView('reference-values',()=>referenceValues());
   if($('runHrPeopleImport'))$('runHrPeopleImport').onclick=async()=>{
     const file=$('hrPeopleFile').files?.[0];if(!file)return toast('Seleziona il file HR');
