@@ -2058,12 +2058,27 @@ async function census(){
   $('assetVerification').onchange=e=>{verification=e.target.value;render()};
   $('newAsset').onclick=()=>openSubView('asset-edit',()=>assetEdit(null));
 
-  if($('importAssets'))$('importAssets').onclick=()=>$('importPanel').classList.toggle('hidden');
+  if($('importAssets'))$('importAssets').onclick=()=>{
+    const panel=$('importPanel');
+    if(!panel)return;
+    const opening=panel.classList.contains('hidden');
+    panel.classList.toggle('hidden');
+    if(opening){
+      const row=$('importAssets').closest('.asset-actions')||$('importAssets').closest('.button-row');
+      if(row)row.after(panel);
+      requestAnimationFrame(()=>panel.scrollIntoView({behavior:'smooth',block:'nearest'}));
+    }
+  };
 
   if($('runAssetImport'))$('runAssetImport').onclick=async()=>{
     const file=$('assetFile').files?.[0];
     if(!file)return toast('Seleziona il file Excel del censimento');
-    $('assetImportResult').textContent='Lettura del foglio Device in corso...';
+
+    const btn=$('runAssetImport');
+    btn.disabled=true;
+    const originalLabel=btn.textContent;
+    btn.textContent='Importazione in corso...';
+    $('assetImportResult').innerHTML='<b>Preparazione del foglio Device...</b>';
 
     try{
       const b64=await new Promise((resolve,reject)=>{
@@ -2073,29 +2088,82 @@ async function census(){
         r.readAsDataURL(file);
       });
 
-      const res=await api('/functions/v1/import-censimento',{
-        method:'POST',
-        body:{file_name:file.name,file_base64:b64}
-      });
+      const chunkSize=200;
+      const importBatch=`device-ui-${Date.now()}`;
+      let offset=0;
+      let total=null;
+      let chunksDone=0;
+      const totals={
+        inserted:0,updated:0,device_inserted:0,device_updated:0,
+        label_only_inserted:0,label_only_existing:0,skipped_verified:0,
+        skipped_invalid:0,occupied_conflicts:0,duplicate_existing_marked:0,
+        device_source_records:0,unchanged:0
+      };
+      let duplicateCodeGroups=0;
+      let duplicateSerialGroups=0;
+      let lastRes=null;
 
+      while(true){
+        const pct=total?Math.min(100,Math.round((offset/total)*100)):0;
+        $('assetImportResult').innerHTML=`
+          <b>Importazione Device a blocchi</b><br>
+          ${total?`Elaborati <b>${offset}</b> / <b>${total}</b> codici · <b>${pct}%</b>`:'Analisi del file in corso...'}
+          <div style="margin-top:8px;height:8px;border-radius:4px;overflow:hidden;background:rgba(127,127,127,.18)">
+            <div style="height:100%;width:${pct}%;background:currentColor;opacity:.55;transition:width .2s"></div>
+          </div>
+          <small class="subline">Blocco ${chunksDone+1} · non chiudere la pagina durante l'importazione.</small>`;
+
+        const res=await api('/functions/v1/import-censimento',{
+          method:'POST',
+          body:{
+            file_name:file.name,
+            file_base64:b64,
+            offset,
+            limit:chunkSize,
+            import_batch:importBatch
+          }
+        });
+        lastRes=res;
+        total=Number(res.rows_with_code||total||0);
+        duplicateCodeGroups=Number(res.duplicate_code_groups||duplicateCodeGroups||0);
+        duplicateSerialGroups=Number(res.duplicate_serial_groups||duplicateSerialGroups||0);
+        for(const k of Object.keys(totals))totals[k]+=Number(res[k]||0);
+        chunksDone++;
+
+        const next=Number(res.next_offset);
+        if(Number.isFinite(next) && next>offset)offset=next;
+        else if(res.done)offset=total||offset;
+        else throw new Error(`Importazione bloccata al codice ${offset}: il server non ha restituito il blocco successivo.`);
+
+        if(res.done || (total && offset>=total))break;
+        await new Promise(resolve=>setTimeout(resolve,120));
+      }
+
+      const pct=100;
       $('assetImportResult').innerHTML=`
-        <b>Foglio ${esc(res.sheet||'Device')} importato.</b><br>
-        Codici letti: <b>${res.rows_with_code||0}</b> ·
-        nuovi asset: <b>${res.inserted||0}</b> ·
-        asset aggiornati: <b>${res.updated||0}</b> ·
-        nuove etichette libere: <b>${res.label_only_inserted||0}</b> ·
-        etichette libere già note: <b>${res.label_only_existing||0}</b> ·
-        verificati protetti: <b>${res.skipped_verified||0}</b> ·
-        conflitti protetti: <b>${res.occupied_conflicts||0}</b> ·
-        codici duplicati (gruppi): <b>${res.duplicate_code_groups||0}</b> ·
-        asset esistenti marcati DUBBIO per codice duplicato: <b>${res.duplicate_existing_marked||0}</b> ·
-        seriali duplicati (gruppi): <b>${res.duplicate_serial_groups||0}</b> ·
-        riferimenti persona Device acquisiti: <b>${res.device_source_records||0}</b> ·
-        righe ignorate: <b>${res.skipped_invalid||0}</b>.`;
-      toast('Foglio Device importato');
-      setTimeout(()=>census(),1500);
+        <b>Foglio ${esc(lastRes?.sheet||'Device')} importato completamente.</b><br>
+        Codici letti: <b>${total||0}</b> ·
+        nuovi asset: <b>${totals.inserted}</b> ·
+        asset aggiornati: <b>${totals.updated}</b> ·
+        nuove etichette libere: <b>${totals.label_only_inserted}</b> ·
+        etichette libere già note: <b>${totals.label_only_existing}</b> ·
+        verificati protetti: <b>${totals.skipped_verified}</b> ·
+        conflitti protetti: <b>${totals.occupied_conflicts}</b> ·
+        codici duplicati (gruppi): <b>${duplicateCodeGroups}</b> ·
+        asset esistenti marcati DUBBIO: <b>${totals.duplicate_existing_marked}</b> ·
+        seriali duplicati (gruppi): <b>${duplicateSerialGroups}</b> ·
+        riferimenti persona Device acquisiti: <b>${totals.device_source_records}</b> ·
+        righe ignorate: <b>${totals.skipped_invalid}</b>.
+        <div style="margin-top:8px;height:8px;border-radius:4px;overflow:hidden;background:rgba(127,127,127,.18)">
+          <div style="height:100%;width:${pct}%;background:currentColor;opacity:.55"></div>
+        </div>`;
+      toast('Foglio Device importato completamente');
+      setTimeout(()=>census(),1200);
     }catch(err){
-      $('assetImportResult').textContent=err.message;
+      $('assetImportResult').innerHTML=`<b>Importazione interrotta.</b><br>${esc(err.message||String(err))}<br><small class="subline">Puoi rilanciare lo stesso file: le righe già importate vengono riconosciute e non duplicate.</small>`;
+    }finally{
+      btn.disabled=false;
+      btn.textContent=originalLabel;
     }
   };
 
