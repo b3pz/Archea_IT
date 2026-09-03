@@ -4,6 +4,7 @@ const KEY='sb_publishable_wuq5rwy4w6ca7nvJTbrXzA_izhCmrf9';
 let session=null,user=null,profile=null;
 let currentView=null;
 let previousView=null;
+let movementPrefill=null;
 
 function applyTheme(theme){
   const chosen=theme==='dark'?'dark':'light';
@@ -352,6 +353,9 @@ function currentITName(){return profile?.nome||user?.email||'IT'}
 function isITRole(){return profile?.ruolo==='IT'||profile?.ruolo==='SUPER_IT'}
 function isSuperIT(){return profile?.ruolo==='SUPER_IT'}
 function isHR(){return profile?.ruolo==='HR'}
+function isHROrIT(){return isHR()||isITRole()}
+function canImportHR(){return isHR()||isSuperIT()}
+function canManageHRValues(){return isHR()||isSuperIT()}
 function assetStatusBadge(s){
   const cls={
     'DISPONIBILE':'asset-available',
@@ -1147,6 +1151,19 @@ async function hrNewMovement(){
     </div>`;
 
   $('moveDate').value=new Date().toISOString().slice(0,10);
+  if(movementPrefill){
+    const pf=movementPrefill;movementPrefill=null;
+    if(pf.type)$('moveType').value=pf.type;
+    if(pf.date)$('moveDate').value=pf.date;
+    if(pf.first)$('personName').value=pf.first;
+    if(pf.surname)$('personSurname').value=pf.surname;
+    if(pf.email)$('personEmail').value=pf.email;
+    if(pf.currentSite)$('currentSite').value=pf.currentSite;
+    if(pf.newSite)$('newSite').value=pf.newSite;
+    if(pf.currentDesk)$('currentDesk').value=pf.currentDesk;
+    if(pf.newDesk)$('newDesk').value=pf.newDesk;
+    if(pf.notes)$('moveNotes').value=pf.notes;
+  }
 
   const impactCopy={
     'NUOVO INGRESSO':{
@@ -1538,9 +1555,10 @@ async function hrHistory(){
   const rows=await loadUnifiedHrMovements();
   let q='',type='',site='',status='';
 
-  const sites=[...new Set(rows.flatMap(x=>[x._siteFrom,x._siteTo]).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'it'));
-  const statuses=[...new Set(rows.map(x=>x._status).filter(x=>x&&x!=='—'))].sort((a,b)=>a.localeCompare(b,'it'));
-  const types=[...new Set(rows.map(x=>x._kind).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'it'));
+  const approvedSiteRows=await select('reference_values','select=value&value_type=eq.SITE&is_approved=eq.true&order=value.asc');
+  const sites=approvedSiteRows.map(x=>x.value).filter(Boolean);
+  const statuses=['DA VERIFICARE','VERIFICATO','PREVISTO','CONFERMATO','EFFETTUATO','ANNULLATO'];
+  const types=['INGRESSO','USCITA','SPOSTAMENTO','SMART WORKING','ALTRO'];
 
   $('content').innerHTML=`
     <div class="panel">
@@ -1577,7 +1595,7 @@ async function hrHistory(){
           <td>${esc(x._deskFrom||'—')} ${x._deskTo?`→ ${esc(x._deskTo)}`:''}</td>
           <td><span class="badge ${x._source==='HR EXCEL'?'source-hr_movimenti':''}">${esc(x._source)}</span></td>
           <td>${x.ticket_id?`<b class="ticket-link" data-open="${x.ticket_id}">${esc(x.tickets?.numero_ticket||'')}</b>`:'—'}</td>
-          <td>${x._editable&&isITRole()?`<select data-hr-status="${x.id}">
+          <td>${x._editable&&isHR()?`<select data-hr-status="${x.id}">
             <option ${x.status==='DA VERIFICARE'?'selected':''}>DA VERIFICARE</option>
             <option ${x.status==='VERIFICATO'?'selected':''}>VERIFICATO</option>
             <option ${x.status==='ANNULLATO'?'selected':''}>ANNULLATO</option>
@@ -1586,7 +1604,7 @@ async function hrHistory(){
       </table></div>`:'<div class="empty">Nessun movimento.</div>';
 
     document.querySelectorAll('[data-open]').forEach(x=>x.onclick=()=>detail(+x.dataset.open));
-    if(isITRole()){
+    if(isHR()){
       document.querySelectorAll('[data-hr-status]').forEach(el=>el.onchange=async()=>{
         try{
           await update('hr_movements',`id=eq.${el.dataset.hrStatus}`,{
@@ -1702,14 +1720,15 @@ function sourceBadge(s){
 function sameText(a,b){return normSearch(a)===normSearch(b)}
 
 async function people(){
-  if(!isITRole())return userHome();
+  if(!isHROrIT())return userHome();
   page('Persone','Anagrafica master, fonti e verifica fisica');
 
-  const [persons,assets,sources,conflicts]=await Promise.all([
+  const [persons,assets,sources,conflicts,approvedSites]=await Promise.all([
     select('people','select=*&order=display_name.asc'),
-    selectAll('assets','select=id,asset_code,assigned_person_id,assigned_user_name,status,verification_status,is_label_only&is_label_only=eq.false&order=asset_code.asc'),
+    isITRole()?selectAll('assets','select=id,asset_code,assigned_person_id,assigned_user_name,status,verification_status,is_label_only&is_label_only=eq.false&order=asset_code.asc'):Promise.resolve([]),
     selectAll('people_source_records','select=id,person_id,source_type,name_raw,normalized_name_key,source_row,source_page,site_raw,match_status&order=id.asc'),
-    select('data_conflicts','select=id,source_type,conflict_type,conflict_key,status&status=eq.APERTO&order=created_at.desc&limit=500')
+    isITRole()?select('data_conflicts','select=id,source_type,conflict_type,conflict_key,status&status=eq.APERTO&order=created_at.desc&limit=500'):Promise.resolve([]),
+    select('reference_values','select=value&value_type=eq.SITE&is_approved=eq.true&order=value.asc')
   ]);
 
   const sourceMap=new Map();
@@ -1748,7 +1767,7 @@ async function people(){
   }
 
   let peopleSort='name',peopleSortDir='asc';
-  const sites=[...new Set(persons.map(x=>x.site).filter(Boolean))].sort();
+  const sites=(approvedSites||[]).map(x=>x.value).filter(Boolean);
   $('content').innerHTML=`
     <div class="metrics people-metrics">
       <div class="metric"><span>Persone master</span><b>${persons.length}</b></div>
@@ -1770,13 +1789,13 @@ async function people(){
       </div>
       <div class="button-row">
         <button id="exportPeopleXls" class="ghost">Scarica Persone XLS</button>
-        ${isSuperIT()?'<button id="showHrImport" class="secondary">Importa HR Movimenti</button><button id="manageReferenceValues" class="ghost">Gestisci valori controllati</button>':''}
+        <button id="addPersonBtn" class="primary">+ Aggiungi persona</button><button id="newMovementBtn" class="secondary">+ Nuovo movimento</button>${canImportHR()?'<button id="showHrImport" class="secondary">Importa HR Movimenti</button>':''}${canManageHRValues()?'<button id="manageReferenceValues" class="ghost">Gestisci valori controllati</button>':''}
       </div>
       <div id="peopleTable"></div>
       <div id="legacyPeopleResults"></div>
     </div>
 
-    ${isSuperIT()?`<div id="hrImportPanel" class="panel hidden">
+    ${canImportHR()?`<div id="hrImportPanel" class="panel hidden">
       <h3>Importazione HR controllata</h3>
       <p class="muted-line">Viene letto esclusivamente il foglio <b>Movimenti</b>. I valori originali restano nelle fonti raw; i dati master già presenti dal PDF non vengono sovrascritti.</p>
       <label>File HR .xlsx<input id="hrPeopleFile" type="file" accept=".xlsx,.xls"></label>
@@ -1825,6 +1844,8 @@ async function people(){
   ['peopleSearch','peopleSite','peopleStatus','peopleVerify'].forEach(id=>{$(id).oninput=render;$(id).onchange=render});
   $('peopleSort').onchange=e=>{peopleSort=e.target.value;render()};
   $('peopleSortDir').onchange=e=>{peopleSortDir=e.target.value;render()};
+  if($('addPersonBtn'))$('addPersonBtn').onclick=()=>openSubView('person-new',()=>personCreate());
+  if($('newMovementBtn'))$('newMovementBtn').onclick=()=>nav('hr-new');
   if($('showHrImport'))$('showHrImport').onclick=()=>{
     const panel=$('hrImportPanel');
     if(!panel)return;
@@ -1850,13 +1871,81 @@ async function people(){
   render();
 }
 
+
+async function personCreate(){
+  if(!isHROrIT())return people();
+  page('Aggiungi persona','Crea la scheda e registra automaticamente un NUOVO INGRESSO da confermare HR');
+  const refs=await select('reference_values','select=value_type,value&is_approved=eq.true&value_type=in.(COMPANY,SITE,DEPARTMENT,PROFILE)&order=value_type.asc,value.asc');
+  const vals=t=>refs.filter(x=>x.value_type===t).map(x=>x.value);
+  const opts=(t,placeholder)=>`<option value="">${placeholder}</option>${vals(t).map(v=>`<option value="${esc(v)}">${esc(v)}</option>`).join('')}`;
+  $('content').innerHTML=`<div class="panel person-form-panel">
+    <div class="info-box"><b>Nuova persona + ingresso.</b><br>La scheda viene creata come <b>PREVISTO</b> e il movimento come <b>DA VERIFICARE</b>. Solo HR può confermare il movimento e renderlo ufficiale.</div>
+    <form id="newPersonForm" class="formgrid">
+      <label>Nome<input id="npFirst" required autocomplete="off"></label>
+      <label>Cognome<input id="npSurname" required autocomplete="off"></label>
+      <label>Email aziendale<input id="npEmail" type="email" placeholder="nome.cognome@archea.it"></label>
+      <label>Data ingresso<input id="npDate" type="date" required></label>
+      <label>Società<select id="npCompany">${opts('COMPANY','Seleziona società...')}</select></label>
+      <label>Sede<select id="npSite" required>${opts('SITE','Seleziona sede...')}</select></label>
+      <label>Dipartimento<select id="npDepartment">${opts('DEPARTMENT','Seleziona dipartimento...')}</select></label>
+      <label>Profilo<select id="npProfile">${opts('PROFILE','Seleziona profilo...')}</select></label>
+      <label>Postazione<input id="npDesk" placeholder="Es. A-12"></label>
+      <label class="full">Note<textarea id="npNotes" rows="3"></textarea></label>
+      <div class="button-row full"><button class="primary">Crea persona + ingresso</button><button id="npCancel" type="button" class="ghost">Annulla</button></div>
+    </form>
+    <p id="npResult"></p>
+  </div>`;
+  $('npDate').value=new Date().toISOString().slice(0,10);
+  ['npCompany','npSite','npDepartment','npProfile'].forEach(id=>enhanceSelect(id,{placeholder:'Seleziona...',searchPlaceholder:'Cerca…'}));
+  $('npCancel').onclick=()=>people();
+  $('newPersonForm').onsubmit=async e=>{
+    e.preventDefault();
+    try{
+      const first=$('npFirst').value.trim(), surname=$('npSurname').value.trim();
+      const display=`${first} ${surname}`.trim();
+      const email=$('npEmail').value.trim().toLowerCase();
+      if(email&&!email.endsWith('@archea.it'))throw new Error('La mail deve essere aziendale @archea.it');
+      const key=normSearch(display);
+      const existing=email?await select('people',`select=id,display_name&corporate_email=ilike.${encodeURIComponent(email)}&limit=2`):await select('people',`select=id,display_name&normalized_name_key=eq.${encodeURIComponent(key)}&limit=2`);
+      if(existing.length)throw new Error(`Esiste già una scheda compatibile: ${existing.map(x=>x.display_name).join(', ')}`);
+      const personRows=await insert('people',{
+        display_name:display,first_name:first,surname,normalized_name_key:key,corporate_email:email||null,
+        company:$('npCompany').value||null,site:$('npSite').value||null,department:$('npDepartment').value||null,profile:$('npProfile').value||null,
+        current_status:'PREVISTO',verification_status:'DA VERIFICARE',primary_source:'MANUALE',notes:$('npNotes').value.trim()||null,
+        created_by:user.id,created_by_name:currentITName(),updated_at:new Date().toISOString()
+      });
+      const person=personRows[0];
+      const date=$('npDate').value;
+      const desk=$('npDesk').value.trim();
+      const ticketRows=await insert('tickets',{
+        categoria:'Movimento persona',oggetto:`NUOVO INGRESSO - ${display}`,
+        descrizione:[`Movimento: NUOVO INGRESSO`,`Persona: ${display}`,email?`Email: ${email}`:'',`Sede: ${$('npSite').value}`,desk?`Postazione: ${desk}`:'',$('npNotes').value.trim()?`Note: ${$('npNotes').value.trim()}`:''].filter(Boolean).join('\n'),
+        stato:'APERTO',priorita:'NORMALE',richiedente_nome:profile.nome||user.email,richiedente_email:user.email,created_by:user.id,created_by_name:currentITName(),origine:'HR',sede:$('npSite').value||null
+      });
+      const ticket=ticketRows[0];
+      const ticketNo=`MOV-${new Date().getFullYear()}-${String(ticket.id).padStart(5,'0')}`;
+      await update('tickets',`id=eq.${ticket.id}`,{numero_ticket:ticketNo});
+      await insert('hr_movements',{
+        movement_type:'NUOVO INGRESSO',movement_date:date,person_name:first,person_surname:surname,person_email:email||null,
+        current_site:null,new_site:$('npSite').value||null,current_desk:null,new_desk:desk||null,notes:$('npNotes').value.trim()||null,
+        created_by:user.id,created_by_email:user.email,created_by_name:currentITName(),status:'DA VERIFICARE',person_state_before:'SCONOSCIUTO',needs_manual_check:false,person_id:person.id,ticket_id:ticket.id
+      },true);
+      await insert('person_events',{person_id:person.id,event_type:'INGRESSO_RICHIESTO',event_date:date,source_type:'PORTALE',note:'Nuovo ingresso creato dal portale; in attesa di conferma HR.',new_data:{site:$('npSite').value||null,desk:desk||null,status:'DA VERIFICARE'},created_by:user.id,created_by_name:currentITName()},false);
+      await insert('ticket_history',{ticket_id:ticket.id,evento:'Nuovo ingresso creato; in attesa di conferma HR',autore:currentITName()},false);
+      $('npResult').innerHTML=`<div class="movement-success"><b>Persona e ingresso creati</b><span>${esc(display)} · ${esc(ticketNo)} · DA VERIFICARE HR</span></div>`;
+      toast('Nuovo ingresso creato');
+      setTimeout(()=>personDetail(person.id),700);
+    }catch(err){$('npResult').innerHTML=`<span class="err">${esc(err.message)}</span>`}
+  };
+}
+
 async function referenceValues(){
-  if(!isSuperIT())return people();
+  if(!canManageHRValues())return people();
   page('Valori controllati','Dropdown approvati per anagrafiche e movimenti');
   const rows=await select('reference_values','select=*&order=value_type.asc,value.asc');
-  const types=['COMPANY','SITE','DEPARTMENT','PROFILE'];
+  const types=isSuperIT()?['COMPANY','SITE','DEPARTMENT','PROFILE','CATEGORY']:['COMPANY','SITE','DEPARTMENT','PROFILE'];
   $('content').innerHTML=`<div class="panel">
-    <div class="panel-head-row"><div><h3>Valori master</h3><p class="muted-line">I valori importati dall'HR entrano come candidati non approvati. Solo SUPER_IT li rende disponibili nei menu a tendina.</p></div><button id="backReferenceValues" class="ghost">Torna alle persone</button></div>
+    <div class="panel-head-row"><div><h3>Valori master</h3><p class="muted-line">I valori importati dall'HR entrano come candidati non approvati. HR può approvare i valori anagrafici del proprio ambito; SUPER_IT gestisce anche le categorie Asset.</p></div><button id="backReferenceValues" class="ghost">Torna alle persone</button></div>
     <form id="referenceValueForm" class="formgrid compact-grid">
       <label>Tipo<select id="refType">${types.map(x=>`<option>${x}</option>`).join('')}</select></label>
       <label>Nuovo valore<input id="refValue" required></label>
@@ -1870,7 +1959,8 @@ async function referenceValues(){
   }).join('')}</div></div>`;
   $('backReferenceValues').onclick=()=>people();
   $('referenceValueForm').onsubmit=async e=>{e.preventDefault();try{
-    const value=$('refValue').value.trim();if(!value)throw new Error('Inserisci un valore');
+    let value=$('refValue').value.trim();if(!value)throw new Error('Inserisci un valore');
+    if($('refType').value==='CATEGORY')value=value.toUpperCase();
     await insert('reference_values',{value_type:$('refType').value,value,normalized_value:normSearch(value),is_approved:$('refApproved').checked,source_type:'MANUALE',created_by:user.id,created_by_name:currentITName()},false);
     toast('Valore aggiunto');referenceValues();
   }catch(err){toast(err.message)}};
@@ -1898,7 +1988,7 @@ async function legacyPersonCreate(sourceName){
 }
 
 async function personDetail(id){
-  if(!isITRole())return;
+  if(!isHROrIT())return;
   const [pr,sources,events,assignments,allAssets,hrMoves]=await Promise.all([
     select('people',`select=*&id=eq.${id}`),
     select('people_source_records',`select=*&person_id=eq.${id}&order=source_type.asc,source_page.asc,source_row.asc&limit=500`),
@@ -1928,18 +2018,14 @@ async function personDetail(id){
       ${p.notes?`<div class="info-box"><b>Note:</b> ${esc(p.notes)}</div>`:''}
       ${p.verified_at?`<p class="verified-line">Scheda verificata da <b>${esc(p.verified_by||'IT')}</b> il ${fmt(p.verified_at)}</p>`:''}
       <div class="button-row">
-        ${p.verification_status!=='VERIFICATO'?'<button id="confirmPerson" class="primary">Conferma scheda persona</button>':''}
+        ${isITRole()&&p.verification_status!=='VERIFICATO'?'<button id="confirmPerson" class="primary">Conferma scheda persona</button>':''}
         <button id="editPerson" class="secondary">Correggi dati</button>
         <button id="personMovement" class="secondary">Registra movimento</button>
         ${p.current_status!=='USCITO'?'<button id="showPersonExit" class="danger-soft">Registra uscita</button>':''}
-        <button id="deletePersonRecord" class="danger-soft">Richiedi eliminazione</button>
+        ${isITRole()?'<button id="deletePersonRecord" class="danger-soft">Richiedi eliminazione</button>':''}
         <button id="backPeople" class="ghost">Torna alle persone</button>
       </div>
-      ${p.current_status!=='USCITO'?`<form id="personExitForm" class="person-exit-form hidden">
-        <h4>Uscita</h4><p>Registra l'uscita effettiva della persona. La data può essere odierna o passata. La persona resta nello storico e gli asset collegati vengono svincolati e rimessi <b>DA CONFERMARE</b>, senza cancellare il valore legacy.</p>
-        <div class="formgrid"><label>Data uscita <span class="field-help">(lascia vuoto se non nota)</span><input id="personExitDate" type="date"></label><label class="check-inline"><input id="personExitApprox" type="checkbox"> Data approssimativa</label><label class="full">Nota<textarea id="personExitNote" rows="3" placeholder="Es. data ricostruita da documentazione precedente"></textarea></label></div>
-        <div class="button-row"><button class="danger-btn">Registra uscita e svincola asset</button><button id="cancelPersonExit" type="button" class="ghost">Annulla</button></div>
-      </form>`:''}
+      ${p.current_status!=='USCITO'?`<div id="personExitForm" class="person-exit-form hidden"><div class="info-box"><b>Uscita = movimento HR.</b><br>La richiesta viene creata come DA VERIFICARE e diventa ufficiale solo dopo conferma HR.</div><div class="button-row"><button id="startExitMovement" type="button" class="danger-btn">Continua con USCITA</button><button id="cancelPersonExit" type="button" class="ghost">Annulla</button></div></div>`:''}
     </div>
 
     <div class="panel"><div class="panel-head-row"><div><h3>Asset attuali / da confermare</h3><p class="muted-line">Conferma solo dopo controllo fisico del dispositivo e dell'etichetta.</p></div>${candidates.length?`<button id="confirmAllCandidateAssets" class="secondary compact">Conferma tutti (${candidates.length})</button>`:''}</div>
@@ -1973,7 +2059,7 @@ async function personDetail(id){
 
   $('backPeople').onclick=()=>people();
   $('editPerson').onclick=()=>openSubView('person-edit',()=>personEdit(id));
-  $('personMovement').onclick=()=>nav('hr-new');
+  $('personMovement').onclick=()=>{movementPrefill={first:p.first_name||'',surname:p.surname||'',email:p.corporate_email||'',currentSite:p.site||''};nav('hr-new')};
   if($('confirmPerson'))$('confirmPerson').onclick=async()=>{try{await rpc('v6_confirm_person',{p_person_id:id});toast('Scheda persona verificata');personDetail(id)}catch(err){toast(err.message)}};
   document.querySelectorAll('[data-open-person-asset]').forEach(b=>b.onclick=()=>openSubView('asset-detail',()=>assetDetail(+b.dataset.openPersonAsset)));
   document.querySelectorAll('[data-confirm-person-asset]').forEach(b=>b.onclick=async()=>{try{await rpc('v6_confirm_asset_assignment',{p_asset_id:+b.dataset.confirmPersonAsset,p_person_id:id});toast('Assegnazione verificata');personDetail(id)}catch(err){toast(err.message)}});
@@ -1983,11 +2069,7 @@ async function personDetail(id){
   };
   if($('showPersonExit'))$('showPersonExit').onclick=()=>$('personExitForm').classList.remove('hidden');
   if($('cancelPersonExit'))$('cancelPersonExit').onclick=()=>$('personExitForm').classList.add('hidden');
-  if($('personExitForm'))$('personExitForm').onsubmit=async e=>{e.preventDefault();
-    const date=$('personExitDate').value||null;const note=$('personExitNote').value.trim()||null;
-    if(!window.confirm(`Registrare l'uscita di ${p.display_name} e svincolare gli asset trovati?`))return;
-    try{const res=await rpc('v6_register_person_exit',{p_person_id:id,p_exit_date:date,p_note:note,p_date_is_approximate:$('personExitApprox').checked});toast(`Uscita registrata · ${res.assets_released||0} asset svincolati`);personDetail(id)}catch(err){toast(err.message)}
-  };
+  if($('startExitMovement'))$('startExitMovement').onclick=()=>{movementPrefill={type:'USCITA',first:p.first_name||'',surname:p.surname||'',email:p.corporate_email||'',currentSite:p.site||''};nav('hr-new')};
   if($('deletePersonRecord'))$('deletePersonRecord').onclick=async()=>{
     const reason=window.prompt(`Richiesta eliminazione per "${p.display_name}".\n\nIndica il motivo (es. record creato per errore, duplicato accidentale):`,'');
     if(reason===null)return;
@@ -1997,6 +2079,7 @@ async function personDetail(id){
 }
 
 async function personEdit(id){
+  if(!isHROrIT())return people();
   const [r,refs]=await Promise.all([select('people',`select=*&id=eq.${id}`),select('reference_values','select=*&is_approved=eq.true&order=value_type.asc,value.asc')]);if(!r.length)return people();const p=r[0];
   const refOptions=(type,current)=>{const vals=refs.filter(x=>x.value_type===type).map(x=>x.value);if(current&&!vals.includes(current))vals.unshift(current);return `<option value="">—</option>${vals.map(v=>`<option value="${esc(v)}" ${v===current?'selected':''}>${esc(v)}${current===v&&!refs.some(x=>x.value_type===type&&x.value===v)?' · attuale':''}</option>`).join('')}`};
   page('Correggi dati persona',p.display_name);
@@ -2030,10 +2113,11 @@ async function census(){
   if(!isITRole())return userHome();
   page('Censimento','Inventario IT, verifica asset e storico');
 
-  const [rows,conflictRows,peopleRows]=await Promise.all([
+  const [rows,conflictRows,peopleRows,approvedSites]=await Promise.all([
     selectAll('assets','select=*&order=asset_code.asc'),
     select('data_conflicts','select=*&status=eq.APERTO&source_type=eq.DEVICE&order=created_at.desc&limit=200'),
-    select('people','select=id,display_name')
+    select('people','select=id,display_name'),
+    select('reference_values','select=value&value_type=eq.SITE&is_approved=eq.true&order=value.asc')
   ]);
   const peopleMap=new Map(peopleRows.map(p=>[p.id,p]));
   rows.forEach(a=>a.current_person_name=a.assigned_person_id?peopleMap.get(a.assigned_person_id)?.display_name||'':'');
@@ -2042,7 +2126,7 @@ async function census(){
   const realAssets=rows.filter(x=>!x.is_label_only);
   const labelOnly=rows.filter(x=>x.is_label_only);
   const hasDeviceImport=rows.some(x=>normSearch(x.source_sheet)==='device');
-  const sites=[...new Set(realAssets.map(x=>x.site).filter(Boolean))].sort();
+  const sites=(approvedSites||[]).map(x=>x.value).filter(Boolean);
 
   $('content').innerHTML=`
     <div class="metrics asset-main-metrics">
@@ -2284,10 +2368,10 @@ async function assetEdit(id,changeMode='CORREZIONE'){
     a=rows[0];
   }
 
-  const categoryRows=await selectAll('assets','select=category&is_label_only=eq.false&order=category.asc');
-  const defaultCategories=['Laptop / Portatile','MacBook','Workstation','PC fisso','iMac','Monitor','iPad / Tablet','Smartphone','Telefono','Stampante','Mouse','Tastiera','Cuffie','Webcam','Access Point','Switch','Firewall','Matterport','Drone','Accessorio','Altro'];
-  const categories=[...new Set([...defaultCategories,...categoryRows.map(x=>x.category).filter(Boolean)])].sort((x,y)=>x.localeCompare(y,'it'));
-  if(a.category&&!categories.includes(a.category))categories.unshift(a.category);
+  const categoryRefs=await select('reference_values','select=value&value_type=eq.CATEGORY&is_approved=eq.true&order=value.asc');
+  const categories=categoryRefs.map(x=>String(x.value||'').trim().toUpperCase()).filter(Boolean);
+  const currentCategory=String(a.category||'').trim().toUpperCase();
+  if(currentCategory&&!categories.includes(currentCategory))categories.unshift(currentCategory);
 
   page(id?(a.is_label_only?'Associa etichetta':(changeMode==='MOVIMENTO'?'Registra movimento asset':'Correggi dati asset')):'Nuovo asset',id?a.asset_code:'Seleziona un codice libero dal Device');
 
@@ -2421,7 +2505,7 @@ async function assetEdit(id,changeMode='CORREZIONE'){
     const data={
       asset_code:$('aCode').value.trim().toUpperCase(),
       is_label_only:false,
-      category:$('aCategory').value.trim()||null,
+      category:$('aCategory').value.trim().toUpperCase()||null,
       brand:$('aBrand').value.trim()||null,
       model:$('aModel').value.trim()||null,
       serial_number:$('aSerial').value.trim()||null,
@@ -2858,11 +2942,75 @@ async function openAssetScanner(cachedRows=null){
   overlay.querySelector('#scannerOpenCode').onclick=()=>openCode(overlay.querySelector('#scannerManualCode').value);
   overlay.querySelector('#scannerManualCode').addEventListener('keydown',e=>{if(e.key==='Enter')openCode(e.target.value)});
   try{
-    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}},audio:false});video.srcObject=stream;
+    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1080}},audio:false});video.srcObject=stream;
     const formats=['qr_code','code_128','code_39','ean_13','ean_8','data_matrix'];
-    if('BarcodeDetector' in window){try{detector=new BarcodeDetector({formats})}catch{detector=new BarcodeDetector()}}
-    status.innerHTML=detector?'Fotocamera attiva. Inquadra QR/barcode oppure digita il codice.':'Fotocamera attiva. Riconoscimento automatico barcode non disponibile su questo browser: digita il codice stampato.';
-    const scan=async()=>{if(stopped)return;try{if(detector&&video.readyState>=2){const codes=await detector.detect(video);if(codes?.length){const raw=codes[0].rawValue||'';status.innerHTML=`Rilevato: <b>${esc(raw)}</b>`;await openCode(raw);return}}}catch{}raf=requestAnimationFrame(scan)};scan();
+    if('BarcodeDetector' in window){try{detector=new BarcodeDetector({formats})}catch{try{detector=new BarcodeDetector()}catch{detector=null}}}
+
+    // Safari/iOS non espone sempre BarcodeDetector: V8.1.1 usa Quagga2 come fallback 1D.
+    const canQuagga=typeof window.Quagga!=='undefined';
+    status.innerHTML=detector
+      ? 'Fotocamera attiva. Inquadra il barcode: il codice asset verrà aperto automaticamente.'
+      : canQuagga
+        ? 'Fotocamera attiva. Scanner compatibile iPhone attivo: inquadra il barcode e tienilo fermo nel riquadro.'
+        : 'Fotocamera attiva. Scanner automatico non caricato: puoi comunque digitare il codice stampato.';
+
+    const canvas=document.createElement('canvas');
+    const ctx=canvas.getContext('2d',{willReadFrequently:true});
+    let lastQuagga=0,quaggaBusy=false,lastRaw='',sameRawCount=0;
+
+    const normalizeDetectedRaw=(raw)=>{
+      const t=String(raw||'').toUpperCase().replace(/ARCHEA/g,' ').replace(/[–—]/g,'-').replace(/\s+/g,' ').trim();
+      // Etichette Archea: accetta A4021, A 4021, ARCHEA-A4021, ecc.
+      const m=t.match(/(?:^|[^A-Z0-9])A\s*-?\s*(\d{3,6})(?:$|[^A-Z0-9])/i)||t.match(/^A\s*-?\s*(\d{3,6})$/i);
+      return m?`A${m[1]}`:t.replace(/\s+/g,'');
+    };
+
+    const quaggaFrame=async()=>{
+      if(!canQuagga||quaggaBusy||video.readyState<2||!video.videoWidth||!video.videoHeight)return null;
+      quaggaBusy=true;
+      try{
+        const vw=video.videoWidth,vh=video.videoHeight;
+        // Ritaglio centrale: coincide con il riquadro visivo e riduce falsi positivi.
+        const sw=Math.floor(vw*0.78),sh=Math.floor(vh*0.42),sx=Math.floor((vw-sw)/2),sy=Math.floor((vh-sh)/2);
+        const maxW=1100,scale=Math.min(1,maxW/sw);
+        canvas.width=Math.max(320,Math.floor(sw*scale));canvas.height=Math.max(180,Math.floor(sh*scale));
+        ctx.drawImage(video,sx,sy,sw,sh,0,0,canvas.width,canvas.height);
+        const src=canvas.toDataURL('image/jpeg',0.86);
+        return await new Promise(resolve=>{
+          try{window.Quagga.decodeSingle({
+            src,
+            numOfWorkers:0,
+            locate:true,
+            inputStream:{size:Math.min(canvas.width,1000)},
+            locator:{patchSize:'medium',halfSample:true},
+            decoder:{readers:['code_128_reader','code_39_reader','code_39_vin_reader','ean_reader','ean_8_reader','upc_reader','upc_e_reader']}
+          },r=>resolve(r?.codeResult?.code||null))}catch{resolve(null)}
+        });
+      }finally{quaggaBusy=false}
+    };
+
+    const scan=async()=>{
+      if(stopped)return;
+      try{
+        let raw='';
+        if(detector&&video.readyState>=2){
+          const codes=await detector.detect(video);
+          raw=codes?.[0]?.rawValue||'';
+        }else if(canQuagga&&performance.now()-lastQuagga>450){
+          lastQuagga=performance.now();
+          raw=await quaggaFrame()||'';
+        }
+        if(raw){
+          const normalized=normalizeDetectedRaw(raw);
+          if(normalized===lastRaw)sameRawCount++;else{lastRaw=normalized;sameRawCount=1}
+          status.innerHTML=`Rilevato: <b>${esc(raw)}</b>${normalized!==raw?` → <b>${esc(normalized)}</b>`:''}`;
+          // Due letture uguali consecutive riducono aperture errate su barcode poco nitidi.
+          if(detector||sameRawCount>=2){await openCode(normalized);return}
+        }
+      }catch{}
+      raf=requestAnimationFrame(scan);
+    };
+    scan();
   }catch(err){status.innerHTML=`Fotocamera non disponibile: ${esc(err.message)}. Puoi comunque digitare il codice.`}
 }
 
@@ -2876,11 +3024,12 @@ async function mapView(){
   try{positions=await select('map_positions','select=*&is_active=eq.true&order=site.asc,zone_code.asc,position_code.asc')}catch(err){
     $('content').innerHTML=`<div class="panel"><div class="info-box"><b>Mappa V8 non ancora inizializzata.</b><br>Esegui la migration <code>08_migration_v8_map.sql</code> in Supabase e ricarica la pagina.</div></div>`;return;
   }
-  const [persons,assets]=await Promise.all([
+  const [persons,assets,approvedSiteRows]=await Promise.all([
     selectAll('people','select=id,display_name,site,department,current_status,map_position_id&current_status=neq.USCITO&order=display_name.asc'),
-    selectAll('assets','select=id,asset_code,category,brand,model,site,position,status,is_label_only&is_label_only=eq.false&order=asset_code.asc')
+    selectAll('assets','select=id,asset_code,category,brand,model,site,position,status,is_label_only&is_label_only=eq.false&order=asset_code.asc'),
+    select('reference_values','select=value&value_type=eq.SITE&is_approved=eq.true&order=value.asc')
   ]);
-  const sites=[...new Set([...positions.map(x=>x.site),...persons.map(x=>x.site),...assets.map(x=>x.site)].filter(Boolean))].sort((a,b)=>a.localeCompare(b,'it'));
+  const sites=approvedSiteRows.map(x=>x.value).filter(Boolean);
   let activeSite=sites[0]||'';
   const render=()=>{
     const ps=positions.filter(x=>!activeSite||x.site===activeSite);
@@ -2922,7 +3071,7 @@ async function mapView(){
 
 function nav(v){
   const normalUserViews=['new','mine'];
-  const hrViews=['hr-new','hr-history','hr-stats'];
+  const hrViews=['persone','hr-new','hr-history','hr-stats'];
 
   if(currentView!==v){
     if(currentView && !String(currentView).includes('detail') && currentView!=='asset-edit'){
@@ -2957,7 +3106,7 @@ function nav(v){
 }
 async function boot(){const raw=localStorage.getItem('archea_sd_session');if(raw){try{session=JSON.parse(raw);user=await api('/auth/v1/user')}catch{clear()}}if(!user){$('login').classList.remove('hidden');$('app').classList.add('hidden');return}const p=await select('profiles',`select=*&id=eq.${user.id}`);if(!p.length){clear();$('loginErr').textContent='Profilo non trovato';return}profile=p[0];$('who').textContent=profile.nome||user.email;$('role').textContent=profile.ruolo;$('userNav').classList.toggle('hidden',isITRole()||isHR());
 $('hrNav').classList.toggle('hidden',!isHR());
-$('itNav').classList.toggle('hidden',!isITRole());$('login').classList.add('hidden');$('app').classList.remove('hidden');currentView=isITRole()?'home':'mine';previousView=null;isITRole()?home():userHome();updateBackButton();
+$('itNav').classList.toggle('hidden',!isITRole());$('login').classList.add('hidden');$('app').classList.remove('hidden');currentView=isITRole()?'home':(isHR()?'persone':'mine');previousView=null;isITRole()?home():(isHR()?people():userHome());updateBackButton();
 refreshNotifications();
 setInterval(refreshNotifications,30000);
 setInterval(async()=>{
