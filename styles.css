@@ -1300,3 +1300,26 @@ html[data-theme="dark"] .account{background:#1b1e1c;border-color:#343835}
   .map-summary{grid-template-columns:1fr 1fr}.map-summary>div:last-child{grid-column:1/-1}.map-zone-grid{grid-template-columns:1fr}.map-toolbar>*{width:100%}.map-toolbar label{min-width:0}.map-toolbar button{width:100%}
   .table-export-row{justify-content:stretch}.table-export-row button{width:100%}
 }
+
+
+/* V8.2 — app-like visual language, intentionally typographic/geometric (no emoji). */
+.field-rule{display:block;margin-top:6px;font-size:10px;line-height:1.35;letter-spacing:.04em;text-transform:uppercase;color:var(--muted,#7c837e)}
+#aCategory{text-transform:uppercase;letter-spacing:.035em}
+nav button::after{display:inline-block;margin-left:auto;opacity:.38;font-size:12px;line-height:1}
+nav button[data-view="home"]::after{content:"⌂"}
+nav button[data-view="new"]::after{content:"＋"}
+nav button[data-view="it"]::after{content:"◇"}
+nav button[data-view="calendar"]::after{content:"□"}
+nav button[data-view="movimenti"]::after,nav button[data-view="hr-history"]::after{content:"↔"}
+nav button[data-view="persone"]::after{content:"○"}
+nav button[data-view="prenotazioni"]::after{content:"▱"}
+nav button[data-view="censimento"]::after{content:"▦"}
+nav button[data-view="mappa"]::after{content:"⌖"}
+nav button[data-view="eliminazioni"]::after{content:"×"}
+nav button{display:flex;align-items:center;gap:10px}
+.scanner-actions-row{display:flex;gap:10px;margin:10px 0}.scanner-actions-row>*{flex:1}
+@media(max-width:768px){
+  html{-webkit-text-size-adjust:100%}
+  input,select,textarea,button{font-size:16px}
+  .scanner-card{max-height:calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 16px);overflow:auto}
+}

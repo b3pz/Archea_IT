@@ -356,6 +356,9 @@ function isHR(){return profile?.ruolo==='HR'}
 function isHROrIT(){return isHR()||isITRole()}
 function canImportHR(){return isHR()||isSuperIT()}
 function canManageHRValues(){return isHR()||isSuperIT()}
+function canApproveHR(){return isHR()||isSuperIT()}
+function canRequestConflictResolution(){return isITRole()}
+function canConfirmConflictResolution(){return isSuperIT()}
 function assetStatusBadge(s){
   const cls={
     'DISPONIBILE':'asset-available',
@@ -405,7 +408,7 @@ function assetSearchNeedles(q){
 }
 function matchesAssetSearch(a,q){
   if(!q)return true;
-  const hay=normSearch(`${a.asset_code||''} ${a.category||''} ${a.brand||''} ${a.model||''} ${a.serial_number||''} ${a.site||''} ${a.position||''} ${a.assigned_user_name||''} ${a.assigned_user_email||''} ${a.current_person_name||''}`);
+  const hay=normSearch(`${a.asset_code||''} ${a.category||''} ${a.category_raw||''} ${a.brand||''} ${a.model||''} ${a.serial_number||''} ${a.site||''} ${a.position||''} ${a.assigned_user_name||''} ${a.assigned_user_email||''} ${a.current_person_name||''}`);
   return assetSearchNeedles(q).some(n=>hay.includes(n));
 }
 
@@ -1553,15 +1556,26 @@ async function hrHistory(){
   page('Storico movimenti','Ingressi, uscite e spostamenti · portale + storico HR importato');
 
   const rows=await loadUnifiedHrMovements();
-  let q='',type='',site='',status='';
+  let q='',type='',site='',status='',showMovementList=false;
 
   const approvedSiteRows=await select('reference_values','select=value&value_type=eq.SITE&is_approved=eq.true&order=value.asc');
   const sites=approvedSiteRows.map(x=>x.value).filter(Boolean);
   const statuses=['DA VERIFICARE','VERIFICATO','PREVISTO','CONFERMATO','EFFETTUATO','ANNULLATO'];
   const types=['INGRESSO','USCITA','SPOSTAMENTO','SMART WORKING','ALTRO'];
 
+  const now=new Date();const ym=now.toISOString().slice(0,7),year=String(now.getFullYear());
+  const monthRows=rows.filter(x=>String(x.movement_date||'').startsWith(ym));
+  const yearRows=rows.filter(x=>String(x.movement_date||'').startsWith(year));
+  const kindCount=(arr,k)=>arr.filter(x=>x._kind===k||(k==='SPOSTAMENTO'&&String(x._kind||'').startsWith('SPOSTAMENTO'))).length;
   $('content').innerHTML=`
-    <div class="panel">
+    <section class="overview-hero movement-overview">
+      <div class="overview-number"><span>MOVIMENTI · ${now.toLocaleString('it-IT',{month:'long'}).toUpperCase()}</span><b>${monthRows.length}</b><small>movimenti registrati</small></div>
+      <div class="movement-bars">
+        ${[['INGRESSO','Ingressi'],['USCITA','Uscite'],['SPOSTAMENTO','Spostamenti']].map(([k,l])=>{const n=kindCount(yearRows,k);const max=Math.max(1,...['INGRESSO','USCITA','SPOSTAMENTO'].map(x=>kindCount(yearRows,x)));return `<div class="bar-row"><span>${l}</span><div><i style="width:${Math.round(n/max*100)}%"></i></div><b>${n}</b></div>`}).join('')}
+      </div>
+      <div class="overview-stats"><div><span>Ingressi mese</span><b>${kindCount(monthRows,'INGRESSO')}</b></div><div><span>Uscite mese</span><b>${kindCount(monthRows,'USCITA')}</b></div><div><span>Spostamenti mese</span><b>${kindCount(monthRows,'SPOSTAMENTO')}</b></div><div><span>Anno ${year}</span><b>${yearRows.length}</b></div></div>
+    </section>
+    <div class="search-stage">
       <div class="queue-toolbar advanced">
         <input id="hrSearch" placeholder="Cerca persona, email, ticket, sede...">
         <select id="hrType"><option value="">Tutti i movimenti</option>${types.map(t=>`<option>${esc(t)}</option>`).join('')}</select>
@@ -1569,7 +1583,7 @@ async function hrHistory(){
         <select id="hrStatus"><option value="">Tutti gli stati</option>${statuses.map(s=>`<option>${esc(s)}</option>`).join('')}</select>
       </div>
       <div class="info-box compact-info">${rows.some(x=>x._source==='HR EXCEL')?"Lo storico importato dall'Excel HR conserva il valore originale. I movimenti del portale restano separati e modificabili secondo i permessi.":"<b>Storico HR non ancora importato.</b> In questo momento la sezione mostra solo eventuali movimenti creati dal portale. Dopo l’import di HR_Collaboratori.xlsx comparirà anche lo storico Excel."}</div>
-      <div id="hrHistoryTable"></div>
+      <div class="explore-head"><button id="toggleMovementList" class="ghost">⌕ Esplora movimenti</button><span>L’elenco completo resta nascosto finché non serve.</span></div><div id="hrHistoryTable"></div>
     </div>`;
 
   const render=()=>{
@@ -1584,9 +1598,10 @@ async function hrHistory(){
       return true;
     });
 
-    $('hrHistoryTable').innerHTML=filtered.length?`
+    const shouldShow=showMovementList||!!q||!!type||!!site||!!status;
+    $('hrHistoryTable').innerHTML=shouldShow&&filtered.length?`
       <div class="tablewrap"><table>
-        <thead><tr><th>Data</th><th>Tipo</th><th>Persona</th><th>Sede</th><th>Postazione</th><th>Fonte</th><th>Ticket</th><th>Stato</th></tr></thead>
+        <thead><tr><th>Data</th><th>Tipo</th><th>Persona</th><th>Sede</th><th>Postazione</th><th>Fonte</th><th>Ticket</th><th>Stato</th><th></th></tr></thead>
         <tbody>${filtered.map(x=>`<tr>
           <td>${dateOnly(x.movement_date)}</td>
           <td><b>${esc(x._typeLabel||x._kind)}</b></td>
@@ -1595,16 +1610,17 @@ async function hrHistory(){
           <td>${esc(x._deskFrom||'—')} ${x._deskTo?`→ ${esc(x._deskTo)}`:''}</td>
           <td><span class="badge ${x._source==='HR EXCEL'?'source-hr_movimenti':''}">${esc(x._source)}</span></td>
           <td>${x.ticket_id?`<b class="ticket-link" data-open="${x.ticket_id}">${esc(x.tickets?.numero_ticket||'')}</b>`:'—'}</td>
-          <td>${x._editable&&isHR()?`<select data-hr-status="${x.id}">
+          <td>${x._editable&&canApproveHR()?`<select data-hr-status="${x.id}">
             <option ${x.status==='DA VERIFICARE'?'selected':''}>DA VERIFICARE</option>
             <option ${x.status==='VERIFICATO'?'selected':''}>VERIFICATO</option>
             <option ${x.status==='ANNULLATO'?'selected':''}>ANNULLATO</option>
           </select>`:`<span class="badge">${esc(x._status||'—')}</span>`}</td>
+          <td>${x._editable&&canApproveHR()?`<button class="ghost compact" data-delete-hr-movement="${x.id}">Elimina test</button>`:''}</td>
         </tr>`).join('')}</tbody>
-      </table></div>`:'<div class="empty">Nessun movimento.</div>';
+      </table></div>`:shouldShow?'<div class="empty">Nessun movimento.</div>':'';
 
     document.querySelectorAll('[data-open]').forEach(x=>x.onclick=()=>detail(+x.dataset.open));
-    if(isHR()){
+    if(canApproveHR()){
       document.querySelectorAll('[data-hr-status]').forEach(el=>el.onchange=async()=>{
         try{
           await update('hr_movements',`id=eq.${el.dataset.hrStatus}`,{
@@ -1617,12 +1633,20 @@ async function hrHistory(){
         }catch(err){toast(err.message)}
       });
     }
+    if(canApproveHR()){
+      document.querySelectorAll('[data-delete-hr-movement]').forEach(b=>b.onclick=async()=>{
+        const reason=window.prompt('Motivo eliminazione record HR di prova/errore:','Record di test / errore di compilazione');
+        if(reason===null)return;
+        try{await rpc('v82_delete_hr_movement',{p_movement_id:+b.dataset.deleteHrMovement,p_reason:reason});toast('Record HR rimosso dalla vista operativa');hrHistory()}catch(err){toast(err.message)}
+      });
+    }
   };
 
-  $('hrSearch').oninput=e=>{q=e.target.value;render()};
-  $('hrType').onchange=e=>{type=e.target.value;render()};
-  $('hrSite').onchange=e=>{site=e.target.value;render()};
-  $('hrStatus').onchange=e=>{status=e.target.value;render()};
+  $('hrSearch').oninput=e=>{q=e.target.value;showMovementList=!!q||showMovementList;render()};
+  $('hrType').onchange=e=>{type=e.target.value;showMovementList=!!type||showMovementList;render()};
+  $('hrSite').onchange=e=>{site=e.target.value;showMovementList=!!site||showMovementList;render()};
+  $('hrStatus').onchange=e=>{status=e.target.value;showMovementList=!!status||showMovementList;render()};
+  if($('toggleMovementList'))$('toggleMovementList').onclick=()=>{showMovementList=!showMovementList;$('toggleMovementList').textContent=showMovementList?'× Nascondi elenco':'⌕ Esplora movimenti';render()};
   render();
 }
 
@@ -2121,7 +2145,7 @@ async function census(){
   ]);
   const peopleMap=new Map(peopleRows.map(p=>[p.id,p]));
   rows.forEach(a=>a.current_person_name=a.assigned_person_id?peopleMap.get(a.assigned_person_id)?.display_name||'':'');
-  let q='',site='',status='',verification='',assetSort='code',assetSortDir='asc';
+  let q='',site='',status='',verification='',assetSort='code',assetSortDir='asc',showAssetList=false;
 
   const realAssets=rows.filter(x=>!x.is_label_only);
   const labelOnly=rows.filter(x=>x.is_label_only);
@@ -2129,15 +2153,18 @@ async function census(){
   const sites=(approvedSites||[]).map(x=>x.value).filter(Boolean);
 
   $('content').innerHTML=`
-    <div class="metrics asset-main-metrics">
-      <div class="metric"><span>Asset censiti</span><b>${realAssets.length}</b></div>
-      <div class="metric"><span>Assegnati</span><b>${realAssets.filter(x=>x.assigned_person_id||x.status==='ASSEGNATO'||x.status==='IN PRESTITO').length}</b></div>
-      <div class="metric"><span>Disponibili</span><b>${realAssets.filter(x=>x.status==='DISPONIBILE').length}</b></div>
-      <div class="metric"><span>Etichette libere</span><b>${labelOnly.length}</b></div>
-      <div class="metric"><span>Conflitti aperti</span><b>${conflictRows.length}</b></div>
-    </div>
+    <section class="overview-hero">
+      <div class="overview-number"><span>PATRIMONIO IT</span><b>${realAssets.length.toLocaleString('it-IT')}</b><small>asset censiti</small></div>
+      <div class="overview-stats">
+        <div><span>Assegnati</span><b>${realAssets.filter(x=>x.assigned_person_id||x.status==='ASSEGNATO'||x.status==='IN PRESTITO').length}</b></div>
+        <div><span>Non assegnati</span><b>${realAssets.filter(x=>!x.assigned_person_id&&x.status!=='ASSEGNATO'&&x.status!=='IN PRESTITO').length}</b></div>
+        <div><span>Da verificare</span><b>${realAssets.filter(x=>x.verification_status!=='VERIFICATO').length}</b></div>
+        <div><span>Conflitti</span><b>${conflictRows.length}</b></div>
+      </div>
+      <div class="overview-chart"><div class="donut" style="--p:${realAssets.length?Math.round(100*realAssets.filter(x=>x.assigned_person_id||x.status==='ASSEGNATO'||x.status==='IN PRESTITO').length/realAssets.length):0}"></div><div><b>Assegnati / non assegnati</b><small>Le etichette libere (${labelOnly.length.toLocaleString('it-IT')}) sono conteggiate separatamente.</small></div></div>
+    </section>
 
-    <div class="panel">
+    <div class="search-stage">
       ${!hasDeviceImport?'<div class="info-box"><b>Foglio Device non ancora importato.</b><br>Il censimento non è vuoto per errore: al momento contiene solo eventuali record manuali/test. Usa <b>Importa foglio Device</b> per caricare il censimento reale.</div>':''}
       <div class="asset-toolbar">
         <input id="assetSearch" placeholder="Cerca: laptop, Dell, Milano, A0345, Mario Rossi...">
@@ -2165,10 +2192,10 @@ async function census(){
         ${isSuperIT()?'<button id="importAssets" class="secondary">Importa foglio Device</button>':''}
       </div>
 
-      <div id="assetTable"></div>
+      <div class="explore-head"><button id="toggleAssetList" class="ghost">⌕ Esplora censimento</button><span>La lista appare solo quando cerchi, filtri o scegli di esplorare.</span></div><div id="assetTable"></div>
     </div>
 
-    ${conflictRows.length?`<div class="panel"><h3>Conflitti Device da verificare</h3><div class="conflict-list">${conflictRows.map(c=>`<div class="conflict-row"><div><b>${esc(c.conflict_key)}</b><span>${esc(c.conflict_type)} · ${esc(c.description||'')}</span></div>${isSuperIT()?`<button class="ghost compact" data-resolve-conflict="${c.id}">Segna risolto</button>`:''}</div>`).join('')}</div></div>`:''}
+    ${conflictRows.length?`<section class="editorial-section conflict-section"><div class="section-kicker">CONTROLLO QUALITÀ</div><div class="section-title-row"><h3>Conflitti da verificare</h3><span class="section-count">${conflictRows.length}</span></div><div class="conflict-list">${conflictRows.map(c=>{const d=c.details||{};const codes=(d.codes||[]);const rr=(d.rows||[]);return `<article class="conflict-compare"><div class="conflict-main"><span class="conflict-type">${esc(c.conflict_type==='DUPLICATE_SERIAL'?'SERIALE DUPLICATO':c.conflict_type==='DUPLICATE_CODE'?'CODICE DUPLICATO':c.conflict_type)}</span><h4>${esc(c.conflict_key)}</h4><p>${esc(c.description||'Nessuna correzione automatica.')}</p>${codes.length?`<div class="compare-strip">${codes.map((code,i)=>`<button class="compare-device" data-conflict-code="${esc(code)}"><b>${esc(code)}</b><small>riga ${esc(rr[i]||'—')}</small></button>`).join('<span class="compare-vs">VS</span>')}</div>`:''}</div><div class="conflict-actions">${canConfirmConflictResolution()?`<button class="secondary compact" data-confirm-conflict="${c.id}">✓ Conferma risoluzione</button>`:`<button class="ghost compact" data-request-conflict="${c.id}">! Segnala risolto</button>`}</div></article>`}).join('')}</div></section>`:''}
 
     ${isSuperIT()?`<div id="importPanel" class="panel hidden">
       <h3>Importazione foglio Device</h3>
@@ -2207,7 +2234,8 @@ async function census(){
       <div><span>Disponibili</span><b>${available}</b></div>
       <div><span>Etichette libere</span><b>${freeLabels}</b></div>`;
 
-    $('assetTable').innerHTML=filtered.length?`
+    const shouldShow=showAssetList||!!q||!!site||!!status||!!verification;
+    $('assetTable').innerHTML=shouldShow&&filtered.length?`
       ${filtered.length>visible.length?`<div class="info-box compact-info">Risultati totali: <b>${filtered.length}</b>. Per mantenere il portale veloce sono visualizzate le prime <b>${visible.length}</b> righe: usa ricerca e filtri per restringere.</div>`:''}
       <div class="tablewrap"><table class="asset-table">
         <thead><tr><th>Codice</th><th>Categoria / Modello</th><th>Sede / Posizione</th><th>Assegnato a</th><th>Stato</th><th>Verifica</th><th>Ultima verifica</th></tr></thead>
@@ -2220,15 +2248,15 @@ async function census(){
           <td>${a.is_label_only?'—':verifyBadge(a.verification_status)}</td>
           <td>${a.is_label_only?'—':(a.verified_at?`${fmt(a.verified_at)}<small class="subline">${esc(a.verified_by||'')}</small>`:'—')}</td>
         </tr>`).join('')}</tbody>
-      </table></div>`:'<div class="empty">Nessun risultato.</div>';
+      </table></div>`:shouldShow?'<div class="empty">Nessun risultato.</div>':'';
 
     document.querySelectorAll('[data-asset]').forEach(x=>x.onclick=()=>openSubView('asset-detail',()=>assetDetail(+x.dataset.asset)));
   };
 
-  $('assetSearch').oninput=e=>{q=e.target.value;render()};
-  $('assetSite').onchange=e=>{site=e.target.value;render()};
-  $('assetStatus').onchange=e=>{status=e.target.value;render()};
-  $('assetVerification').onchange=e=>{verification=e.target.value;render()};
+  $('assetSearch').oninput=e=>{q=e.target.value;showAssetList=!!q||showAssetList;render()};
+  $('assetSite').onchange=e=>{site=e.target.value;showAssetList=!!site||showAssetList;render()};
+  $('assetStatus').onchange=e=>{status=e.target.value;showAssetList=!!status||showAssetList;render()};
+  $('assetVerification').onchange=e=>{verification=e.target.value;showAssetList=!!verification||showAssetList;render()};
   $('assetSort').onchange=e=>{assetSort=e.target.value;render()};
   $('assetSortDir').onchange=e=>{assetSortDir=e.target.value;render()};
   $('newAsset').onclick=()=>openSubView('asset-edit',()=>assetEdit(null));
@@ -2348,8 +2376,11 @@ async function census(){
     }
   };
 
-  document.querySelectorAll('[data-resolve-conflict]').forEach(b=>b.onclick=async()=>{try{await rpc('v6_resolve_conflict',{p_conflict_id:+b.dataset.resolveConflict,p_status:'RISOLTO'});toast('Conflitto chiuso');census()}catch(err){toast(err.message)}});
+  document.querySelectorAll('[data-conflict-code]').forEach(b=>b.onclick=()=>{const code=b.dataset.conflictCode;const a=rows.find(x=>String(x.asset_code).toUpperCase()===String(code).toUpperCase());if(a)openSubView('asset-detail',()=>assetDetail(a.id));else toast('Asset non trovato nel master')});
+  document.querySelectorAll('[data-request-conflict]').forEach(b=>b.onclick=async()=>{const reason=window.prompt('Perché ritieni risolto il conflitto?','Verificato sul campo');if(reason===null)return;try{await rpc('v82_request_conflict_resolution',{p_conflict_id:+b.dataset.requestConflict,p_reason:reason});toast('Risoluzione segnalata a SUPER_IT')}catch(err){toast(err.message)}});
+  document.querySelectorAll('[data-confirm-conflict]').forEach(b=>b.onclick=async()=>{try{let req=await select('conflict_resolution_requests',`select=id&conflict_id=eq.${b.dataset.confirmConflict}&status=eq.IN_ATTESA&limit=1`);if(!req.length){await rpc('v82_request_conflict_resolution',{p_conflict_id:+b.dataset.confirmConflict,p_reason:'Verifica SUPER_IT'});req=await select('conflict_resolution_requests',`select=id&conflict_id=eq.${b.dataset.confirmConflict}&status=eq.IN_ATTESA&limit=1`)}await rpc('v82_review_conflict_resolution',{p_request_id:req[0].id,p_approve:true,p_note:'Confermato da SUPER_IT'});toast('Conflitto risolto');census()}catch(err){toast(err.message)}});
 
+  if($('toggleAssetList'))$('toggleAssetList').onclick=()=>{showAssetList=!showAssetList;$('toggleAssetList').textContent=showAssetList?'× Nascondi elenco':'⌕ Esplora censimento';render()};
   render();
 }
 
@@ -2371,7 +2402,6 @@ async function assetEdit(id,changeMode='CORREZIONE'){
   const categoryRefs=await select('reference_values','select=value&value_type=eq.CATEGORY&is_approved=eq.true&order=value.asc');
   const categories=categoryRefs.map(x=>String(x.value||'').trim().toUpperCase()).filter(Boolean);
   const currentCategory=String(a.category||'').trim().toUpperCase();
-  if(currentCategory&&!categories.includes(currentCategory))categories.unshift(currentCategory);
 
   page(id?(a.is_label_only?'Associa etichetta':(changeMode==='MOVIMENTO'?'Registra movimento asset':'Correggi dati asset')):'Nuovo asset',id?a.asset_code:'Seleziona un codice libero dal Device');
 
@@ -2382,13 +2412,15 @@ async function assetEdit(id,changeMode='CORREZIONE'){
           <input id="aCode" value="${esc(a.asset_code||'')}" required placeholder="A4689" ${id?'readonly':''} autocomplete="off">
           <small id="codeCheck" class="code-check ${id&&a.is_label_only?'ok':''}">${id&&a.is_label_only?'Etichetta libera: completa i dati del dispositivo.':id?'Il codice identificativo non può essere modificato.':'Inserisci il codice riportato sull’etichetta fisica.'}</small>
         </label>
-        <label>Categoria<select id="aCategory">
-          <option value="">Seleziona categoria...</option>
-          ${categories.map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join('')}
-        </select></label>
+        <label>Categoria operativa
+          <input id="aCategory" list="assetCategoryList" value="${esc(currentCategory)}" autocomplete="off" autocapitalize="characters" placeholder="SCRIVI O SELEZIONA...">
+          <datalist id="assetCategoryList">${categories.map(c=>`<option value="${esc(c)}"></option>`).join('')}</datalist>
+          <small class="field-rule">Solo CAPS. Usa una categoria esistente quando possibile; se ne inserisci una nuova, scrivila esattamente come deve diventare la categoria operativa.</small>
+          ${a.category_raw&&String(a.category_raw).trim().toUpperCase()!==currentCategory?`<small class="raw-hint">Originale Excel: ${esc(a.category_raw)}</small>`:''}
+        </label>
         <label>Marca<input id="aBrand" value="${esc(a.brand||'')}"></label>
         <label>Modello<input id="aModel" value="${esc(a.model||'')}"></label>
-        <label>Seriale<input id="aSerial" value="${esc(a.serial_number||'')}"></label>
+        <label>Seriale<div class="inline-field-action"><input id="aSerial" value="${esc(a.serial_number||'')}"><button id="scanSerial" type="button" class="ghost compact">Scansiona SN</button></div></label>
         <label>Sede<input id="aSite" value="${esc(a.site||'')}"></label>
         <label>Posizione<input id="aPosition" value="${esc(a.position||'')}"></label>
         <label>Utente assegnato<input id="aUserName" value="${esc(a.assigned_user_name||'')}"></label>
@@ -2418,10 +2450,13 @@ async function assetEdit(id,changeMode='CORREZIONE'){
       </form>
     </div>`;
 
-  $('aCategory').value=a.category||'';
+  $('aCategory').value=currentCategory||'';
+  $('aCategory').addEventListener('input',e=>{const pos=e.target.selectionStart; e.target.value=e.target.value.toUpperCase(); try{e.target.setSelectionRange(pos,pos)}catch{}});
+  $('aCategory').addEventListener('blur',e=>{e.target.value=e.target.value.trim().replace(/\s+/g,' ').toUpperCase();});
   $('aStatus').value=a.status||'DA VERIFICARE';
   $('aVerify').value=a.verification_status||'DA VERIFICARE';
   $('backToCensus').onclick=()=>census();
+  if($('scanSerial'))$('scanSerial').onclick=()=>openSerialScanner($('aSerial'));
 
   let reservedRow=id&&a.is_label_only?a:null;
   let checkTimer=null;
@@ -2502,10 +2537,13 @@ async function assetEdit(id,changeMode='CORREZIONE'){
     if(id&&!a.is_label_only&&!changeReason){toast('Indica il motivo della modifica');return;}
     if(id&&!a.is_label_only&&changeMode==='MOVIMENTO'&&!effectiveDate){toast('Indica la data effettiva del movimento');return;}
 
+    const typedCategory=$('aCategory').value.trim().replace(/\s+/g,' ').toUpperCase();
+    if(typedCategory && typedCategory!==$('aCategory').value.trim()){ $('aCategory').value=typedCategory; }
+    if(typedCategory && !/^[A-Z0-9À-ÖØ-Þ /&+._-]+$/.test(typedCategory)){toast('La categoria deve essere scritta in CAPS e senza caratteri anomali');return;}
     const data={
       asset_code:$('aCode').value.trim().toUpperCase(),
       is_label_only:false,
-      category:$('aCategory').value.trim().toUpperCase()||null,
+      category:typedCategory||null,
       brand:$('aBrand').value.trim()||null,
       model:$('aModel').value.trim()||null,
       serial_number:$('aSerial').value.trim()||null,
@@ -2946,7 +2984,7 @@ async function openAssetScanner(cachedRows=null){
     const formats=['qr_code','code_128','code_39','ean_13','ean_8','data_matrix'];
     if('BarcodeDetector' in window){try{detector=new BarcodeDetector({formats})}catch{try{detector=new BarcodeDetector()}catch{detector=null}}}
 
-    // Safari/iOS non espone sempre BarcodeDetector: V8.1.1 usa Quagga2 come fallback 1D.
+    // Safari/iOS non espone sempre BarcodeDetector: V8.2 usa Quagga2 come fallback 1D.
     const canQuagga=typeof window.Quagga!=='undefined';
     status.innerHTML=detector
       ? 'Fotocamera attiva. Inquadra il barcode: il codice asset verrà aperto automaticamente.'
@@ -3012,6 +3050,53 @@ async function openAssetScanner(cachedRows=null){
     };
     scan();
   }catch(err){status.innerHTML=`Fotocamera non disponibile: ${esc(err.message)}. Puoi comunque digitare il codice.`}
+}
+
+// ============================================================
+// V8.2 — SCANSIONE SERIALE: BARCODE + TESTO (OCR) + MANUALE
+// ============================================================
+async function openSerialScanner(targetInput){
+  const overlay=document.createElement('div');
+  overlay.className='scanner-overlay';
+  overlay.innerHTML=`<div class="scanner-card">
+    <div class="scanner-head"><div><span class="eyebrow">VERIFICA DEVICE</span><h3>Leggi seriale</h3></div><button class="ghost compact" id="closeSerialScanner">Chiudi</button></div>
+    <div class="scanner-video-wrap"><video id="serialVideo" autoplay playsinline muted></video><div class="scanner-frame"></div></div>
+    <div id="serialStatus" class="info-box">Avvio fotocamera…</div>
+    <div class="scanner-actions-row"><button id="serialOcr" class="secondary" type="button">Leggi testo</button><button id="serialUse" class="primary" type="button">Usa seriale</button></div>
+    <label>Seriale rilevato / manuale<input id="serialCandidate" autocomplete="off" autocapitalize="characters" placeholder="Inserisci o correggi il seriale"></label>
+    <p class="muted-line">Barcode: lettura automatica quando supportata. Testo: premi <b>Leggi testo</b>, poi controlla sempre il risultato prima di usarlo. Il valore non viene salvato senza conferma.</p>
+  </div>`;
+  document.body.appendChild(overlay);
+  const video=overlay.querySelector('#serialVideo'),status=overlay.querySelector('#serialStatus'),candidate=overlay.querySelector('#serialCandidate');
+  let stream=null,stopped=false,raf=0,detector=null,lastRaw='',same=0;
+  const close=()=>{stopped=true;if(raf)cancelAnimationFrame(raf);if(stream)stream.getTracks().forEach(t=>t.stop());overlay.remove()};
+  overlay.querySelector('#closeSerialScanner').onclick=close;
+  overlay.addEventListener('click',e=>{if(e.target===overlay)close()});
+  const normalizeSerial=v=>String(v||'').trim().replace(/\s+/g,'').toUpperCase();
+  overlay.querySelector('#serialUse').onclick=()=>{const v=normalizeSerial(candidate.value);if(!v)return toast('Nessun seriale inserito');targetInput.value=v;targetInput.dispatchEvent(new Event('input',{bubbles:true}));close();};
+  candidate.addEventListener('input',()=>{candidate.value=candidate.value.toUpperCase()});
+  try{
+    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1080}},audio:false});video.srcObject=stream;
+    if('BarcodeDetector' in window){try{detector=new BarcodeDetector()}catch{detector=null}}
+    status.textContent=detector?'Fotocamera attiva. Inquadra barcode/QR del seriale.':'Fotocamera attiva. Puoi usare Leggi testo oppure inserire il seriale manualmente.';
+    const scan=async()=>{if(stopped)return;try{if(detector&&video.readyState>=2){const codes=await detector.detect(video);const raw=codes?.[0]?.rawValue||'';if(raw){const n=normalizeSerial(raw);if(n===lastRaw)same++;else{lastRaw=n;same=1} candidate.value=n;status.innerHTML=`Barcode rilevato: <b>${esc(n)}</b>`;if(same>=2&&navigator.vibrate)navigator.vibrate(35);}}}catch{}raf=requestAnimationFrame(scan)};scan();
+  }catch(err){status.innerHTML=`Fotocamera non disponibile: ${esc(err.message)}. Inserisci il seriale manualmente.`}
+  overlay.querySelector('#serialOcr').onclick=async()=>{
+    if(!video.videoWidth){toast('Fotocamera non pronta');return}
+    if(typeof window.Tesseract==='undefined'){toast('Modulo lettura testo non disponibile');return}
+    status.textContent='Lettura testo in corso…';
+    const canvas=document.createElement('canvas'),ctx=canvas.getContext('2d');
+    const vw=video.videoWidth,vh=video.videoHeight,sw=Math.floor(vw*.88),sh=Math.floor(vh*.42),sx=Math.floor((vw-sw)/2),sy=Math.floor((vh-sh)/2);
+    canvas.width=Math.min(1600,sw);canvas.height=Math.round(sh*(canvas.width/sw));ctx.drawImage(video,sx,sy,sw,sh,0,0,canvas.width,canvas.height);
+    try{
+      const result=await window.Tesseract.recognize(canvas,'eng',{logger:()=>{}});
+      const lines=String(result?.data?.text||'').split(/\n+/).map(x=>x.trim()).filter(Boolean);
+      const candidates=lines.map(x=>x.replace(/[^A-Za-z0-9._\/-]/g,'')).filter(x=>x.length>=4).sort((a,b)=>b.length-a.length);
+      const best=normalizeSerial(candidates[0]||'');
+      if(best){candidate.value=best;status.innerHTML=`Testo rilevato: <b>${esc(best)}</b>. Controllalo prima di confermare.`;if(navigator.vibrate)navigator.vibrate(35)}
+      else status.textContent='Nessuna stringa affidabile rilevata. Riprova più vicino o inseriscila manualmente.';
+    }catch(err){status.textContent='Lettura testo non riuscita. Puoi comunque inserire il seriale manualmente.'}
+  };
 }
 
 // ============================================================
@@ -3137,7 +3222,7 @@ function openMobileNav(){
   if(btn)btn.setAttribute('aria-expanded','true');
   document.body.classList.add('mobile-nav-open');
 }
-document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{closeMobileNav();nav(b.dataset.view)});
+document.querySelectorAll('nav button,[data-bottom-view]').forEach(b=>b.onclick=()=>{closeMobileNav();nav(b.dataset.view||b.dataset.bottomView)});
 if($('mobileMenuBtn'))$('mobileMenuBtn').onclick=()=>{
   const open=$('sidebar')?.classList.contains('mobile-open');
   open?closeMobileNav():openMobileNav();
