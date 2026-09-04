@@ -431,10 +431,12 @@ function ageClass(d){
 
 async function userHome(){const epoch=navigationEpoch;page('Service Desk','Apri una richiesta o controlla i tuoi ticket');const d=await select('tickets',`select=*&richiedente_email=eq.${encodeURIComponent(user.email)}&order=created_at.desc&limit=5`);if(epoch!==navigationEpoch)return;$('content').innerHTML=`<div class="userhero"><h3>Come possiamo aiutarti?</h3><p>Puoi aprire ticket e vedere solo le tue richieste.</p><button id="openNow" class="primary">Apri un ticket</button></div><div class="panel"><h3>Le tue richieste recenti</h3>${table(d)}</div>`;$('openNow').onclick=()=>nav('new');wire()}
 async function home(){
+  const epoch=navigationEpoch;
   if(!isITRole())return userHome();
   page(isSuperIT()?'Dashboard SUPER IT':'Dashboard','Panoramica operativa del Service Desk');
 
   const d=await select('tickets','select=*&order=updated_at.desc.nullslast,created_at.desc');
+  if(epoch!==navigationEpoch)return;
 
   if(!isSuperIT()){
     $('content').innerHTML=`
@@ -450,6 +452,7 @@ async function home(){
   }
 
   const its=await select('profiles','select=id,nome,email,ruolo&ruolo=in.(IT,SUPER_IT)&order=nome.asc');
+  if(epoch!==navigationEpoch)return;
   const workload=its.map(itp=>({
     nome:itp.nome||itp.email,
     n:d.filter(t=>t.assigned_to===itp.id&&t.stato!=='CHIUSO').length
@@ -1061,11 +1064,13 @@ function printDeliverySheet(b){
 
 
 async function hrNewMovement(){
+  const epoch=navigationEpoch;
   if(!isHR()&&!isITRole())return userHome();
   page('Nuovo movimento','Ingressi, uscite e spostamenti con impatto operativo sul reparto IT');
 
   let siteOptions=['Firenze','Milano','Roma','Genova','Tirana','Parigi','Dubai','San Paolo','Pechino','Shanghai'];
   try{const rv=await select('reference_values','select=value&value_type=eq.SITE&is_approved=eq.true&order=value.asc');if(rv.length)siteOptions=rv.map(x=>x.value)}catch{}
+  if(epoch!==navigationEpoch)return;
 
   $('content').innerHTML=`
     <div class="panel hr-movement-panel">
@@ -1909,9 +1914,11 @@ async function people(){
 
 
 async function personCreate(){
+  const epoch=navigationEpoch;
   if(!isHROrIT())return people();
   page('Aggiungi persona','Crea la scheda e registra automaticamente un NUOVO INGRESSO da confermare HR');
   const refs=await select('reference_values','select=value_type,value&is_approved=eq.true&value_type=in.(COMPANY,SITE,DEPARTMENT,PROFILE)&order=value_type.asc,value.asc');
+  if(epoch!==navigationEpoch)return;
   const vals=t=>refs.filter(x=>x.value_type===t).map(x=>x.value);
   const opts=(t,placeholder)=>`<option value="">${placeholder}</option>${vals(t).map(v=>`<option value="${esc(v)}">${esc(v)}</option>`).join('')}`;
   $('content').innerHTML=`<div class="panel person-form-panel">
@@ -1976,9 +1983,11 @@ async function personCreate(){
 }
 
 async function referenceValues(){
+  const epoch=navigationEpoch;
   if(!canManageHRValues())return people();
   page('Valori controllati','Dropdown approvati per anagrafiche e movimenti');
   const rows=await select('reference_values','select=*&order=value_type.asc,value.asc');
+  if(epoch!==navigationEpoch)return;
   const types=isSuperIT()?['COMPANY','SITE','DEPARTMENT','PROFILE','CATEGORY']:['COMPANY','SITE','DEPARTMENT','PROFILE'];
   $('content').innerHTML=`<div class="panel">
     <div class="panel-head-row"><div><h3>Valori master</h3><p class="muted-line">I valori importati dall'HR entrano come candidati non approvati. HR può approvare i valori anagrafici del proprio ambito; SUPER_IT gestisce anche le categorie Asset.</p></div><button id="backReferenceValues" class="ghost">Torna alle persone</button></div>
@@ -2150,12 +2159,32 @@ async function census(){
   if(!isITRole())return userHome();
   page('Censimento','Inventario IT, verifica asset e storico');
 
-  const [rows,conflictRows,peopleRows,approvedSites]=await Promise.all([
-    selectAll('assets','select=*&order=asset_code.asc'),
-    select('data_conflicts','select=*&status=eq.APERTO&source_type=eq.DEVICE&order=created_at.desc&limit=200'),
-    select('people','select=id,display_name'),
-    select('reference_values','select=value&value_type=eq.SITE&is_approved=eq.true&order=value.asc')
-  ]);
+  // V8.2.2: render immediato. Non lasciare mai il corpo della pagina precedente
+  // mentre il censimento (migliaia di righe) viene caricato da Supabase.
+  $('content').innerHTML=`
+    <section class="overview-hero census-loading-shell">
+      <div class="overview-number"><span>PATRIMONIO IT</span><b>…</b><small>caricamento censimento</small></div>
+      <div class="overview-stats">
+        <div><span>Asset</span><b>—</b></div><div><span>Assegnati</span><b>—</b></div>
+        <div><span>Da verificare</span><b>—</b></div><div><span>Conflitti</span><b>—</b></div>
+      </div>
+      <div class="info-box">Caricamento del censimento in corso…</div>
+    </section>`;
+
+  let rows,conflictRows,peopleRows,approvedSites;
+  try{
+    [rows,conflictRows,peopleRows,approvedSites]=await Promise.all([
+      selectAll('assets','select=*&order=asset_code.asc'),
+      select('data_conflicts','select=*&status=eq.APERTO&source_type=eq.DEVICE&order=created_at.desc&limit=200'),
+      select('people','select=id,display_name'),
+      select('reference_values','select=value&value_type=eq.SITE&is_approved=eq.true&order=value.asc')
+    ]);
+  }catch(err){
+    if(epoch!==navigationEpoch)return;
+    $('content').innerHTML=`<div class="panel error-panel"><h3>Impossibile caricare il censimento</h3><p>${esc(err?.message||'Errore sconosciuto')}</p><button id="retryCensus" class="primary">Riprova</button></div>`;
+    if($('retryCensus'))$('retryCensus').onclick=()=>census();
+    return;
+  }
   if(epoch!==navigationEpoch)return;
   const peopleMap=new Map(peopleRows.map(p=>[p.id,p]));
   rows.forEach(a=>a.current_person_name=a.assigned_person_id?peopleMap.get(a.assigned_person_id)?.display_name||'':'');
