@@ -1343,3 +1343,260 @@ nav button{display:flex;align-items:center;gap:10px}
 
 @media(max-width:1000px){.overview-hero,.movement-overview{grid-template-columns:1fr 1.5fr}.overview-chart{grid-column:1/-1;border-left:0!important;border-top:1px solid var(--border)}.movement-overview>.overview-stats{grid-column:1/-1;border-left:0!important;border-top:1px solid var(--border)}}
 @media(max-width:700px){.overview-hero,.movement-overview{display:block;margin-top:0}.overview-hero>div{padding:20px 4px}.overview-hero>div+div{border-left:0;border-top:1px solid var(--border)}.overview-stats{padding:0!important}.overview-stats>div{padding:17px 6px;min-height:86px}.overview-number>b{font-size:52px}.donut{width:84px;height:84px}.donut:after{inset:14px}.movement-bars{padding:20px 4px!important}.bar-row{grid-template-columns:82px 1fr 34px}.conflict-compare{grid-template-columns:1fr}.conflict-actions>*{width:100%}.explore-head{align-items:flex-start;flex-direction:column}.explore-head .ghost{width:100%}}
+
+/* ============================================================
+   V8.3 — UI FOUNDATION
+   Regole globali congelate: leggibilità, responsive, light/dark,
+   navigazione raggiungibile e componenti coerenti.
+   ============================================================ */
+:root{
+  --panel:var(--surface);
+  --border:var(--line);
+  --surface-raised:#fffefa;
+  --surface-subtle:#f3f2ec;
+  --text-strong:#121512;
+  --text-secondary:#5f675f;
+  --focus:#5e7966;
+  --focus-ring:rgba(94,121,102,.18);
+  --radius-sm:7px;
+  --radius-md:10px;
+  --radius-lg:14px;
+  --control-h:46px;
+  --sidebar-w:272px;
+}
+html[data-theme="dark"]{
+  --panel:var(--surface);
+  --border:var(--line);
+  --surface-raised:#1c231d;
+  --surface-subtle:#151b16;
+  --text-strong:#fbfaf4;
+  --text-secondary:#a7b0a8;
+  --focus:#9aae9e;
+  --focus-ring:rgba(154,174,158,.22);
+}
+
+html,body{max-width:100%;overflow-x:hidden}
+body{font-size:15px;line-height:1.5}
+.app{grid-template-columns:var(--sidebar-w) minmax(0,1fr)}
+main{min-width:0;padding-left:40px;padding-right:40px}
+
+/* --- Sidebar: brand fisso, menu scrollabile, account sempre raggiungibile --- */
+.sidebar{
+  width:var(--sidebar-w);
+  height:100dvh;
+  min-height:0;
+  overflow:hidden;
+  padding:24px 18px 18px;
+  gap:16px;
+}
+.sidebar-top{
+  flex:1 1 auto;
+  min-height:0;
+  display:flex;
+  flex-direction:column;
+  overflow:hidden;
+}
+.brand{flex:0 0 auto;padding:0 10px 22px}
+.brand img{width:150px;max-width:100%}
+.brand-copy strong{font-size:14px}
+.brand-copy span{font-size:10px}
+.nav-section-label{flex:0 0 auto;margin:22px 12px 8px;font-size:10px}
+.sidebar-top nav:not(.hidden){
+  flex:1 1 auto;
+  min-height:0;
+  overflow-y:auto;
+  overflow-x:hidden;
+  align-content:start;
+  padding:2px 3px 10px 0;
+  scrollbar-width:thin;
+  scrollbar-color:#4b544c transparent;
+}
+.sidebar-top nav::-webkit-scrollbar{width:6px}
+.sidebar-top nav::-webkit-scrollbar-thumb{background:#414a42;border-radius:20px}
+.sidebar-bottom{flex:0 0 auto;gap:12px;padding-top:2px}
+.service-mark{padding:0 10px}
+.account{padding:13px 14px;gap:11px}
+.account b{font-size:13px}
+.account span{font-size:10px}
+.account .ghost{min-height:44px;font-size:14px}
+
+/* Real icons, not tiny decoration */
+nav button{
+  min-height:48px;
+  padding:10px 11px;
+  gap:12px;
+  border-radius:9px;
+  font-size:15px;
+  line-height:1.2;
+  color:#dfe3de;
+}
+nav button::after{display:none!important}
+nav button::before{
+  left:auto;
+  right:0;
+  top:9px;
+  bottom:9px;
+  width:2px;
+  height:auto;
+  opacity:0;
+  transform:none;
+  border-radius:2px;
+}
+nav button:hover::before,nav button.active::before{opacity:1;height:auto}
+nav button.active{background:#242a25;color:#fff;font-weight:700}
+nav button.active .nav-icon{color:#fff}
+.nav-icon{
+  width:22px;
+  height:22px;
+  flex:0 0 22px;
+  display:grid;
+  place-items:center;
+  color:#aeb8b0;
+}
+.nav-icon svg{display:block;width:22px;height:22px}
+
+/* --- Typography & controls --- */
+.page-heading h2{font-size:clamp(34px,2.35vw,40px);line-height:1.02;font-weight:700}
+.page-heading p{font-size:14px;line-height:1.45;color:var(--text-secondary)}
+.eyebrow{font-size:11px;letter-spacing:.16em}
+.panel>h3:first-child{font-size:18px;line-height:1.2}
+label{font-size:13px;line-height:1.35;color:var(--text)}
+input,textarea,select,.smart-select-trigger{
+  min-height:var(--control-h);
+  font-size:15px;
+  border-radius:var(--radius-sm);
+}
+input:focus,textarea:focus,select:focus,.smart-select-trigger:focus-visible,
+button:focus-visible{
+  outline:none;
+  border-color:var(--focus);
+  box-shadow:0 0 0 3px var(--focus-ring);
+}
+.primary,.secondary,.ghost{min-height:44px;font-size:14px;padding:10px 15px}
+.compact{min-height:36px;padding:7px 10px;font-size:12px}
+.theme-toggle{min-height:44px;font-size:12px;padding:0 14px}
+.bell{width:44px;height:44px}
+
+/* --- Surfaces: less boxed, more precise --- */
+.panel,.hero,.userhero,.metric,.queue-card,.tablewrap{
+  border-color:var(--border);
+  box-shadow:none;
+}
+.panel{padding:24px}
+.metrics{gap:12px}
+.metric{min-height:104px;padding:18px 20px;background:var(--surface-raised)}
+.metric span{font-size:10px;letter-spacing:.1em;margin-bottom:10px}
+.metric b{font-size:32px;font-weight:650}
+.info-box{font-size:14px;line-height:1.45}
+
+/* --- Ticket tables: desktop readable, local overflow only --- */
+.tablewrap{max-width:100%;overflow-x:auto;overflow-y:hidden}
+.ticket-table{min-width:900px;width:100%;font-size:14px}
+.ticket-table th{font-size:10px;padding:12px 14px}
+.ticket-table td{padding:13px 14px;line-height:1.35}
+.ticket-table .ticket-number{white-space:nowrap}
+.ticket-table .ticket-subject{min-width:190px;max-width:360px;overflow-wrap:anywhere}
+.ticket-table .ticket-category{min-width:150px}
+.ticket-table .ticket-date{white-space:nowrap;min-width:145px}
+.ticket-table .row-actions{white-space:nowrap}
+.ticket-link{font-weight:800}
+.badge,.unassigned{font-size:10px;padding:5px 9px}
+
+/* Age highlighting must respect dark mode: no white strips inside dark tables. */
+html[data-theme="dark"] .age-mid td{background:#1d2119!important}
+html[data-theme="dark"] .age-old td{background:#241b19!important}
+html[data-theme="dark"] .ticket-table tbody tr{background:transparent}
+html[data-theme="dark"] .ticket-table tbody tr:hover td{background:#202721}
+html[data-theme="dark"] .surface,
+html[data-theme="dark"] .surface-raised{color:var(--text)}
+
+/* --- Responsive tightening before mobile drawer --- */
+@media(max-width:1280px){
+  :root{--sidebar-w:248px}
+  main{padding-left:28px;padding-right:28px}
+  .sidebar{padding-left:15px;padding-right:15px}
+  .brand img{width:138px}
+  nav button{font-size:14px}
+}
+
+@media(max-width:900px){
+  :root{--sidebar-w:0px}
+  main{padding-left:14px;padding-right:14px}
+  .sidebar{width:min(88vw,340px);padding:calc(18px + env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom))}
+  .sidebar-top{overflow:hidden}
+  .sidebar-top nav:not(.hidden){overflow-y:auto}
+  .sidebar-bottom{margin-top:10px}
+  .sidebar nav button{min-height:50px;font-size:16px;padding:12px}
+  .nav-icon,.nav-icon svg{width:23px;height:23px;flex-basis:23px}
+  .topbar{min-width:0}
+  .page-heading .eyebrow{font-size:9px}
+  .page-heading h2{font-size:27px}
+  .page-heading p{font-size:12px}
+  .theme-toggle #themeLabel{display:none}
+  .theme-toggle{width:44px;height:44px;padding:0;justify-content:center}
+  .bell{width:44px;height:44px}
+  .metrics,.people-metrics,.asset-main-metrics,.queue-stats{gap:9px}
+  .metric{min-height:92px;padding:15px}
+  .metric span{font-size:9px}
+  .metric b{font-size:29px}
+  .panel,.hero,.userhero{padding:17px}
+}
+
+/* Ticket table becomes a true touch list instead of a miniature desktop table. */
+@media(max-width:700px){
+  .ticket-table-wrap{overflow:visible;border:0;background:transparent;border-radius:0}
+  .ticket-table-wrap>.table-export-row{padding:0 0 10px}
+  .ticket-table-wrap>.table-export-row button{width:auto;min-height:40px}
+  .ticket-table,.ticket-table tbody,.ticket-table tr,.ticket-table td{display:block;width:100%;min-width:0}
+  .ticket-table thead{display:none}
+  .ticket-table{border:0;background:transparent}
+  .ticket-table tbody{display:grid;gap:10px}
+  .ticket-table tr{
+    margin:0;
+    padding:14px 15px;
+    border:1px solid var(--border);
+    border-radius:var(--radius-md);
+    background:var(--surface-raised);
+  }
+  .ticket-table td{
+    border:0!important;
+    padding:5px 0!important;
+    display:grid;
+    grid-template-columns:108px minmax(0,1fr);
+    gap:12px;
+    align-items:start;
+    background:transparent!important;
+    min-width:0!important;
+    max-width:none!important;
+    white-space:normal!important;
+  }
+  .ticket-table td::before{
+    content:attr(data-label);
+    padding-top:2px;
+    font-size:9px;
+    line-height:1.25;
+    letter-spacing:.12em;
+    text-transform:uppercase;
+    color:var(--muted);
+    font-weight:800;
+  }
+  .ticket-table .ticket-number{padding-bottom:9px!important;margin-bottom:4px;border-bottom:1px solid var(--border)!important}
+  .ticket-table .ticket-number .ticket-link{font-size:16px}
+  .ticket-table .ticket-subject{font-weight:650;overflow-wrap:anywhere}
+  .ticket-table .row-actions{padding-top:10px!important;margin-top:4px;border-top:1px solid var(--border)!important}
+  .ticket-table .row-actions button{width:100%;min-height:42px}
+  .ticket-table tr.click:active{transform:scale(.995)}
+  html[data-theme="dark"] .ticket-table tr{background:var(--surface-raised)}
+  html[data-theme="dark"] .ticket-table tbody tr:hover td{background:transparent}
+}
+
+@media(max-width:430px){
+  .ticket-table td{grid-template-columns:92px minmax(0,1fr);gap:9px}
+  .ticket-table .ticket-number .ticket-link{font-size:15px}
+  .page-heading h2{font-size:25px}
+}
+
+/* Motion/accessibility */
+@media(prefers-reduced-motion:reduce){
+  *,*::before,*::after{scroll-behavior:auto!important;transition-duration:.001ms!important;animation-duration:.001ms!important;animation-iteration-count:1!important}
+}

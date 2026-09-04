@@ -312,8 +312,8 @@ $('bellBtn').onclick=()=>{$('notificationPanel').classList.toggle('hidden');if(!
 $('markAllRead').onclick=async()=>{await update('notifications',`user_id=eq.${user.id}&is_read=eq.false`,{is_read:true});refreshNotifications()}
 
 function table(rows,it=false,quick=false){
-  if(!rows.length)return'<p>Nessun ticket.</p>';
-  return `<div class="tablewrap"><table>
+  if(!rows.length)return'<p class="empty-state">Nessun ticket.</p>';
+  return `<div class="tablewrap ticket-table-wrap"><table class="ticket-table ${it?'ticket-table-it':'ticket-table-client'}">
     <thead><tr>
       <th>Ticket</th>
       ${it?'<th>Assegnato a</th><th>Priorità</th>':''}
@@ -322,18 +322,18 @@ function table(rows,it=false,quick=false){
       <th>Oggetto</th>
       <th>Stato</th>
       <th>Data apertura</th>
-      ${it&&quick?'<th></th>':''}
+      ${it&&quick?'<th aria-label="Azioni"></th>':''}
     </tr></thead>
     <tbody>${rows.map(x=>`<tr class="${quick?'':'click'}" ${quick?'':`data-id="${x.id}"`}>
-      <td><b class="ticket-link" data-open="${x.id}">${x.numero_ticket||num(x.id)}</b></td>
-      ${it?`<td>${x.assegnato_a?`<span class="assignee">${esc(x.assegnato_a)}</span>`:'<span class="unassigned">NON ASSEGNATO</span>'}</td>
-      <td>${priorityBadge(x.priorita)}</td>`:''}
-      ${it?`<td>${esc(x.richiedente_nome||x.richiedente_email)}</td>`:''}
-      <td>${esc(x.categoria)}</td>
-      <td>${esc(x.oggetto)}</td>
-      <td>${badge(x.stato)}</td>
-      <td>${fmt(x.created_at)}</td>
-      ${it&&quick?`<td class="row-actions">${!x.assegnato_a&&x.stato!=='CHIUSO'?`<button class="secondary compact take-row" data-take="${x.id}">Prendi in carico</button>`:''}</td>`:''}
+      <td data-label="Ticket" class="ticket-number"><b class="ticket-link" data-open="${x.id}">${x.numero_ticket||num(x.id)}</b></td>
+      ${it?`<td data-label="Assegnato a" class="ticket-assignee">${x.assegnato_a?`<span class="assignee">${esc(x.assegnato_a)}</span>`:'<span class="unassigned">NON ASSEGNATO</span>'}</td>
+      <td data-label="Priorità" class="ticket-priority">${priorityBadge(x.priorita)}</td>`:''}
+      ${it?`<td data-label="Richiedente" class="ticket-requester">${esc(x.richiedente_nome||x.richiedente_email)}</td>`:''}
+      <td data-label="Categoria" class="ticket-category">${esc(x.categoria)}</td>
+      <td data-label="Oggetto" class="ticket-subject">${esc(x.oggetto)}</td>
+      <td data-label="Stato" class="ticket-status">${badge(x.stato)}</td>
+      <td data-label="Data apertura" class="ticket-date">${fmt(x.created_at)}</td>
+      ${it&&quick?`<td data-label="Azioni" class="row-actions">${!x.assegnato_a&&x.stato!=='CHIUSO'?`<button class="secondary compact take-row" data-take="${x.id}">Prendi in carico</button>`:''}</td>`:''}
     </tr>`).join('')}</tbody>
   </table></div>`;
 }
@@ -3202,6 +3202,45 @@ async function mapView(){
   render();
 }
 
+
+// ============================================================
+// V8.3 — NAVIGATION FOUNDATION
+// Icone SVG leggibili + stato attivo coerente su desktop/mobile.
+// ============================================================
+const NAV_ICON_PATHS={
+  home:'<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
+  new:'<circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/>',
+  mine:'<path d="M7 4h10M7 9h10M7 14h7M4 4h.01M4 9h.01M4 14h.01"/><path d="M15 18l2 2 4-4"/>',
+  it:'<path d="M14.7 6.3a4 4 0 0 0-5 5L3 18l3 3 6.7-6.7a4 4 0 0 0 5-5l-2.4 2.4-3-3 2.4-2.4Z"/>',
+  calendar:'<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 10h18"/>',
+  movimenti:'<path d="M7 7h11M14 3l4 4-4 4M17 17H6M10 13l-4 4 4 4"/>',
+  persone:'<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>',
+  prenotazioni:'<rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M3 12h18"/>',
+  censimento:'<ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/>',
+  mappa:'<path d="M20 10c0 5-8 11-8 11S4 15 4 10a8 8 0 1 1 16 0Z"/><circle cx="12" cy="10" r="2.5"/>',
+  eliminazioni:'<path d="M3 6h18M8 6V4h8v2M19 6l-1 15H6L5 6M10 11v6M14 11v6"/>',
+  'hr-new':'<circle cx="9" cy="7" r="4"/><path d="M2 21v-2a7 7 0 0 1 14 0v2M19 8v6M16 11h6"/>',
+  'hr-history':'<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/>',
+  'hr-stats':'<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>'
+};
+function navIconKey(view){return view==='calendar'?'calendar':view==='movimenti'?'movimenti':view==='persone'?'persone':view==='prenotazioni'?'prenotazioni':view==='censimento'?'censimento':view==='mappa'?'mappa':view==='eliminazioni'?'eliminazioni':view}
+function installNavIcons(){
+  document.querySelectorAll('nav button[data-view]').forEach(btn=>{
+    if(btn.querySelector('.nav-icon'))return;
+    const key=navIconKey(btn.dataset.view);
+    const path=NAV_ICON_PATHS[key]||NAV_ICON_PATHS.mine;
+    const icon=document.createElement('span');icon.className='nav-icon';icon.setAttribute('aria-hidden','true');icon.innerHTML=`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${path}</svg>`;
+    btn.prepend(icon);
+  });
+}
+function setActiveNavigation(view){
+  document.querySelectorAll('nav button[data-view]').forEach(btn=>{
+    const active=btn.dataset.view===view || (view==='movimenti'&&btn.dataset.view==='hr-history');
+    btn.classList.toggle('active',active);
+    if(active)btn.setAttribute('aria-current','page');else btn.removeAttribute('aria-current');
+  });
+}
+
 function nav(v){
   navigationEpoch++;
   const normalUserViews=['new','mine'];
@@ -3213,6 +3252,8 @@ function nav(v){
     }
     currentView=v;
   }
+
+  setActiveNavigation(v);
 
   if(isHR()){
     if(!normalUserViews.includes(v)&&!hrViews.includes(v))return userHome();
@@ -3240,7 +3281,7 @@ function nav(v){
 }
 async function boot(){const raw=localStorage.getItem('archea_sd_session');if(raw){try{session=JSON.parse(raw);user=await api('/auth/v1/user')}catch{clear()}}if(!user){$('login').classList.remove('hidden');$('app').classList.add('hidden');return}const p=await select('profiles',`select=*&id=eq.${user.id}`);if(!p.length){clear();$('loginErr').textContent='Profilo non trovato';return}profile=p[0];$('who').textContent=profile.nome||user.email;$('role').textContent=profile.ruolo;$('userNav').classList.toggle('hidden',isITRole()||isHR());
 $('hrNav').classList.toggle('hidden',!isHR());
-$('itNav').classList.toggle('hidden',!isITRole());$('login').classList.add('hidden');$('app').classList.remove('hidden');currentView=isITRole()?'home':(isHR()?'persone':'mine');previousView=null;isITRole()?home():(isHR()?people():userHome());updateBackButton();
+$('itNav').classList.toggle('hidden',!isITRole());$('login').classList.add('hidden');$('app').classList.remove('hidden');currentView=isITRole()?'home':(isHR()?'persone':'mine');previousView=null;setActiveNavigation(currentView);isITRole()?home():(isHR()?people():userHome());updateBackButton();
 refreshNotifications();
 setInterval(refreshNotifications,30000);
 setInterval(async()=>{
@@ -3280,5 +3321,6 @@ if($('mobileNavBackdrop'))$('mobileNavBackdrop').onclick=closeMobileNav;
 window.addEventListener('resize',()=>{if(window.innerWidth>900)closeMobileNav()});
 if($('backBtn')) $('backBtn').onclick=goBack;
 if($('themeToggle')) $('themeToggle').onclick=()=>applyTheme(document.documentElement.dataset.theme==='dark'?'light':'dark');
+installNavIcons();
 initTheme();
 boot();
