@@ -40,7 +40,7 @@ function goBack(){
   nav(target);
 }
 const $=i=>document.getElementById(i);
-const esc=s=>(s||'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
+const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
 
 
 // V8 — ordinamento tabelle + export Excel XML (.xls)
@@ -88,6 +88,7 @@ function enableTableTools(root=document){
 }
 const tableObserver=new MutationObserver(()=>enableTableTools($('content')||document));
 window.addEventListener('DOMContentLoaded',()=>{const c=$('content');if(c){tableObserver.observe(c,{childList:true,subtree:true});enableTableTools(c)}});
+window.addEventListener('error',e=>{if(currentView==='censimento'&&$('content')?.querySelector('.census-loading-shell')){$('content').innerHTML=`<div class="panel error-panel"><h3>Errore durante il rendering del censimento</h3><p>${esc(e?.message||'Errore JavaScript')}</p><button id="retryCensus" class="primary">Riprova</button></div>`;setTimeout(()=>{if($('retryCensus'))$('retryCensus').onclick=()=>census()},0)}});
 
 function warehouseCodeOk(code){return /^M-[A-Z]+\d*$/i.test(String(code||'').trim())}
 function normalPositionCodeOk(code){return !!String(code||'').trim()&&!/^M-/i.test(String(code||'').trim())}
